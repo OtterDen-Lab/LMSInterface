@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lms-interface"
+version = "0.1.0"
+description = "LMS interface library for teaching tools"
+authors = [
+    {name = "Sam Ogden", email = "samuel.s.ogden@gmail.com"},
+]
+requires-python = ">=3.9"
+dependencies = [
+    "canvasapi==3.2.0",
+    "requests==2.32.2",
+    "python-dotenv==1.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "flake8",
+    "mypy",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
