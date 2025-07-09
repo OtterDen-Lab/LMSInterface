@@ -17,7 +17,7 @@ import sys
 import requests
 import io
 
-from classes import LMSWrapper, Student, Submission, Submission__Canvas
+from .classes import LMSWrapper, Student, Submission, Submission__Canvas
 
 import logging
 
