@@ -134,7 +134,7 @@ class Feedback:
   def __str__(self):
     short_comment = self.comments[:10].replace('\n', '\\n')
     ellipsis = '...' if len(self.comments) > 10 else ''
-    return f"Feedback({self.score}, {short_comment}{ellipsis})"
+    return f"Feedback({self.score:.4g}, {short_comment}{ellipsis})"
 
   def __eq__(self, other):
     if not isinstance(other, Feedback):

@@ -381,7 +381,7 @@ class CanvasHelpers:
     for assignment in assignments:
       # if "PA6" not in assignment.name: continue
       missing_submissions = cls.get_unsubmitted_submissions(interface, assignment)
-      if len(missing_submissions) == 0:
+      if not missing_submissions:
         continue
       log.info(f"Assignment: ({assignment.quiz_id if hasattr(assignment, 'quiz_id') else assignment.id}) {assignment.name} {assignment.published}")
       for submission in missing_submissions:
