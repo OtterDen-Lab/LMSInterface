@@ -109,9 +109,14 @@ class CanvasCourse(LMSWrapper):
     assignment_group = self.create_assignment_group()
     canvas_quiz = self.add_quiz(assignment_group, title, is_practice=is_practice)
     
+    total_questions = len(quiz)
+    total_variations_created = 0
+    log.info(f"Starting to push quiz '{title or canvas_quiz.title}' with {total_questions} questions to Canvas")
+    log.info(f"Target: {num_variations} variations per question")
+    
     all_variations = set()
     for question_i, question in enumerate(quiz):
-      log.debug(f"Generating #{question_i} ({question.name})")
+      log.info(f"Processing question {question_i + 1}/{total_questions}: '{question.name}'")
   
       group : canvasapi.quiz.QuizGroup = canvas_quiz.create_question_group([
         {
@@ -147,6 +152,7 @@ class CanvasCourse(LMSWrapper):
         log.debug(f"Pushing #{question_i} ({question.name}) {variation_count+1} / {num_variations} to canvas...")
         try:
           canvas_quiz.create_question(question=question_for_canvas)
+          total_variations_created += 1
         except canvasapi.exceptions.CanvasException as e:
           log.warning("Encountered Canvas error.")
           log.warning(e)
@@ -160,6 +166,11 @@ class CanvasCourse(LMSWrapper):
           break
         if variation_count >= question.possible_variations:
           break
+      
+      log.info(f"Completed question '{question.name}': {variation_count} variations created")
+    
+    log.info(f"Quiz upload completed! Total variations created: {total_variations_created}")
+    log.info(f"Canvas quiz URL: {canvas_quiz.html_url}")
   
   def get_assignment(self, assignment_id : int) -> Optional[CanvasAssignment]:
     try:
