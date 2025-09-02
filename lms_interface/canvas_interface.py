@@ -280,6 +280,8 @@ class CanvasAssignment(LMSWrapper):
     else:
       limit = 1_000_000 # magically large number
     
+    test_only = kwargs.get("test", False)
+    
     submissions: List[Submission__Canvas] = []
     
     # Get all submissions and their history (which is necessary for attachments when students can resubmit)
@@ -291,6 +293,9 @@ class CanvasAssignment(LMSWrapper):
         user_id=canvaspai_submission.user_id,
         _inner=self.canvas_course.get_user(canvaspai_submission.user_id)
       )
+      
+      if test_only and not "Test Student" in student.name:
+        continue
       
       log.debug(f"Checking submissions for {student.name} ({len(canvaspai_submission.submission_history)} submissions)")
       
