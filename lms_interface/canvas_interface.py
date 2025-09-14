@@ -1,6 +1,7 @@
 #!env python
 from __future__ import annotations
 
+import tempfile
 import time
 import typing
 from datetime import datetime, timezone
@@ -264,13 +265,18 @@ class CanvasAssignment(LMSWrapper):
         else:
           log.warning(f"Failed to delete comment {comment_id}: {response.json()}")
     
-    def upload_buffer_as_file(buffer, name):
-      with io.FileIO(name, 'w+') as ffid:
-        ffid.write(buffer)
-        ffid.flush()
-        ffid.seek(0)
-        submission.upload_comment(ffid)
-      os.remove(name)
+    def upload_buffer_as_file(buffer: bytes, name: str):
+      suffix = os.path.splitext(name)[1]  # keep extension if needed
+      with tempfile.NamedTemporaryFile(mode="wb", delete=False, dir=".", prefix="feedback_", suffix=suffix) as tmp:
+        tmp.write(buffer)
+        tmp.flush()
+        os.fsync(tmp.fileno())
+        temp_path = tmp.name  # str path
+      
+      try:
+        submission.upload_comment(temp_path)  # ✅ PathLike | str
+      finally:
+        os.remove(temp_path)
     
     if len(comments) > 0:
       upload_buffer_as_file(comments.encode('utf-8'), "feedback.txt")
