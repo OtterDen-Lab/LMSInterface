@@ -110,7 +110,7 @@ class CanvasCourse(LMSWrapper):
     assignment_group = self.create_assignment_group()
     canvas_quiz = self.add_quiz(assignment_group, title, is_practice=is_practice)
     
-    total_questions = len(quiz)
+    total_questions = len(quiz.questions)
     total_variations_created = 0
     log.info(f"Starting to push quiz '{title or canvas_quiz.title}' with {total_questions} questions to Canvas")
     log.info(f"Target: {num_variations} variations per question")
