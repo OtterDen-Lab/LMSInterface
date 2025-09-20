@@ -17,7 +17,7 @@ import sys
 import requests
 import io
 
-from .classes import LMSWrapper, Student, Submission, FileSubmission__Canvas, QuizSubmission
+from .classes import LMSWrapper, Student, Submission, FileSubmission__Canvas, TextSubmission__Canvas, QuizSubmission
 
 import logging
 
@@ -303,7 +303,7 @@ class CanvasAssignment(LMSWrapper):
     for i, attachment_buffer in enumerate(attachments):
       upload_buffer_as_file(attachment_buffer.read(), attachment_buffer.name)
   
-  def get_submissions(self, only_include_most_recent: bool = True, **kwargs) -> List[FileSubmission__Canvas]:
+  def get_submissions(self, only_include_most_recent: bool = True, **kwargs) -> List[Submission]:
     """
     Gets submission objects (in this case Submission__Canvas objects) that have students and potentially attachments
     :param only_include_most_recent: Include only the most recent submission
@@ -318,7 +318,7 @@ class CanvasAssignment(LMSWrapper):
     
     test_only = kwargs.get("test", False)
     
-    submissions: List[FileSubmission__Canvas] = []
+    submissions: List[Submission] = []
     
     # Get all submissions and their history (which is necessary for attachments when students can resubmit)
     for student_index, canvaspai_submission in enumerate(self.assignment.get_submissions(include='submission_history', **kwargs)):
@@ -342,21 +342,41 @@ class CanvasAssignment(LMSWrapper):
         log.debug(f"Submission: {student_submission['workflow_state']} " +
                   (f"{student_submission['score']:0.2f}" if student_submission['score'] is not None else "None"))
         
-        try:
-          attachments = student_submission["attachments"]
-        except KeyError:
-          log.warning(f"No submissions found for {student.name}")
-          continue
-        
-        # Add submission to list
-        submissions.append(
-          FileSubmission__Canvas(
-            student=student,
-            status=Submission.Status.from_string(student_submission["workflow_state"], student_submission['score']),
-            attachments=attachments,
-            submission_index=student_submission_index
+        # Determine submission type based on content
+        has_attachments = student_submission.get("attachments") is not None and len(student_submission.get("attachments", [])) > 0
+        has_text_body = student_submission.get("body") is not None and student_submission.get("body").strip() != ""
+
+        if has_text_body:
+          # Text submission - create object-like structure from dict
+          log.debug(f"Detected text submission for {student.name}")
+          class SubmissionObject:
+            def __init__(self, data):
+              for key, value in data.items():
+                setattr(self, key, value)
+
+          submissions.append(
+            TextSubmission__Canvas(
+              student=student,
+              status=Submission.Status.from_string(student_submission["workflow_state"], student_submission['score']),
+              canvas_submission_data=SubmissionObject(student_submission),
+              submission_index=student_submission_index
+            )
           )
-        )
+        elif has_attachments:
+          # File submission
+          log.debug(f"Detected file submission for {student.name}")
+          submissions.append(
+            FileSubmission__Canvas(
+              student=student,
+              status=Submission.Status.from_string(student_submission["workflow_state"], student_submission['score']),
+              attachments=student_submission["attachments"],
+              submission_index=student_submission_index
+            )
+          )
+        else:
+          # No submission content found
+          log.debug(f"No submission content found for {student.name}")
+          continue
         
         # Check if we should only include the most recent
         if only_include_most_recent: break

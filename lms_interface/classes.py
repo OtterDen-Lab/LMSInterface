@@ -135,6 +135,53 @@ class FileSubmission__Canvas(FileSubmission):
     return self._files
 
 
+class TextSubmission(Submission):
+  """Submission containing text content (e.g., journal entries, essays)"""
+  def __init__(self, *args, submission_text=None, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.submission_text = submission_text or ""
+
+  def get_text(self):
+    """Get the submission text content"""
+    return self.submission_text
+
+  def get_word_count(self):
+    """Get word count of the submission"""
+    return len(self.submission_text.split()) if self.submission_text else 0
+
+  def get_character_count(self, include_spaces=True):
+    """Get character count of the submission"""
+    if not self.submission_text:
+      return 0
+    return len(self.submission_text) if include_spaces else len(self.submission_text.replace(' ', ''))
+
+  def get_paragraph_count(self):
+    """Get paragraph count (separated by double newlines)"""
+    if not self.submission_text:
+      return 0
+    paragraphs = [p.strip() for p in self.submission_text.split('\n\n') if p.strip()]
+    return len(paragraphs)
+
+  def __str__(self):
+    try:
+      word_count = self.get_word_count()
+      return f"TextSubmission({self.student.name} : {word_count} words : {self.feedback})"
+    except AttributeError:
+      return f"TextSubmission({self.student} : {self.get_word_count()} words : {self.feedback})"
+
+
+class TextSubmission__Canvas(TextSubmission):
+  """Canvas-specific text submission"""
+  def __init__(self, *args, canvas_submission_data=None, **kwargs):
+    submission_text = ""
+    if canvas_submission_data and hasattr(canvas_submission_data, 'body') and canvas_submission_data.body:
+      submission_text = canvas_submission_data.body
+
+    super().__init__(*args, submission_text=submission_text, **kwargs)
+    self.canvas_submission_data = canvas_submission_data
+    self.submission_index = kwargs.get("submission_index", None)
+
+
 class QuizSubmission(Submission):
   """Submission containing quiz responses and question metadata"""
   def __init__(self, *args, quiz_submission_data=None, student_responses=None, quiz_questions=None, **kwargs):
