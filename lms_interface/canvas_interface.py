@@ -57,16 +57,16 @@ class CanvasCourse(LMSWrapper):
     self.course = canvasapi_course
     super().__init__(_inner=self.course)
   
-  def create_assignment_group(self, name="dev") -> canvasapi.course.AssignmentGroup:
+  def create_assignment_group(self, name="dev", delete_existing=False) -> canvasapi.course.AssignmentGroup:
     for assignment_group in self.course.get_assignment_groups():
       if assignment_group.name == name:
-        if name == "dev":
+        if delete_existing:
           assignment_group.delete()
           break
         log.info("Found group existing, returning")
         return assignment_group
     assignment_group = self.course.create_assignment_group(
-      name="dev",
+      name=name,
       group_weight=0.0,
       position=0,
     )
@@ -105,9 +105,11 @@ class CanvasCourse(LMSWrapper):
       quiz: Quiz,
       num_variations: int,
       title: typing.Optional[str] = None,
-      is_practice = False
+      is_practice = False,
+      assignment_group: typing.Optional[canvasapi.course.AssignmentGroup] = None
   ):
-    assignment_group = self.create_assignment_group()
+    if assignment_group is None:
+      assignment_group = self.create_assignment_group()
     canvas_quiz = self.add_quiz(assignment_group, title, is_practice=is_practice)
     
     total_questions = len(quiz.questions)
