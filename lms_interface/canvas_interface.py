@@ -19,6 +19,7 @@ import requests
 import io
 
 from .classes import LMSWrapper, Student, Submission, Submission__Canvas
+from QuizGenerator.performance import timer, PerformanceTracker
 
 import logging
 
@@ -132,37 +133,47 @@ class CanvasCourse(LMSWrapper):
       # Track all variations across every question, in case we have duplicate questions
       variation_count = 0
       for attempt_number in range(QUESTION_VARIATIONS_TO_TRY):
-        
+
         # Get the question in a format that is ready for canvas (e.g. json)
-        question_for_canvas = question.get__canvas(self.course, canvas_quiz)
+        with timer("canvas_prepare_question",
+                  question_name=question.name,
+                  question_type=question.__class__.__name__,
+                  variation_number=variation_count + 1):
+          question_for_canvas = question.get__canvas(self.course, canvas_quiz, rng_seed=attempt_number)
+
         question_fingerprint = question_for_canvas["question_text"]
         try:
           question_fingerprint += ''.join([str(a["answer_text"]) for a in question_for_canvas["answers"]])
         except TypeError as e:
           log.error(e)
           log.warning("Continuing anyway")
-          
-        
+
+
         # if it is in the variations that we have already seen then skip ahead, else track
         if question_fingerprint in all_variations:
           continue
         all_variations.add(question_fingerprint)
-        
+
         # Set group ID to add it to the question group
         question_for_canvas["quiz_group_id"] = group.id
-        
+
         # Push question to canvas
         log.debug(f"Pushing #{question_i} ({question.name}) {variation_count+1} / {num_variations} to canvas...")
-        try:
-          canvas_quiz.create_question(question=question_for_canvas)
-          total_variations_created += 1
-        except canvasapi.exceptions.CanvasException as e:
-          log.warning("Encountered Canvas error.")
-          log.warning(e)
-          log.warning("Sleeping for 1s...")
-          time.sleep(1)
-          continue
-        
+
+        with timer("canvas_api_upload",
+                  question_name=question.name,
+                  question_type=question.__class__.__name__,
+                  variation_number=variation_count + 1):
+          try:
+            canvas_quiz.create_question(question=question_for_canvas)
+            total_variations_created += 1
+          except canvasapi.exceptions.CanvasException as e:
+            log.warning("Encountered Canvas error.")
+            log.warning(e)
+            log.warning("Sleeping for 1s...")
+            time.sleep(1)
+            continue
+
         # Update and check variations already seen
         variation_count += 1
         if variation_count >= num_variations:
