@@ -139,7 +139,10 @@ class CanvasCourse(LMSWrapper):
                   question_name=question.name,
                   question_type=question.__class__.__name__,
                   variation_number=variation_count + 1):
-          question_for_canvas = question.get__canvas(self.course, canvas_quiz, rng_seed=attempt_number)
+          # Use large gaps between base seeds to avoid overlap with backoff attempts
+          # Each variation gets seeds: base_seed, base_seed+1, base_seed+2, ... for backoffs
+          base_seed = attempt_number * 1000
+          question_for_canvas = question.get__canvas(self.course, canvas_quiz, rng_seed=base_seed)
 
         question_fingerprint = question_for_canvas["question_text"]
         try:
