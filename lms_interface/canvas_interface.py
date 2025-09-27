@@ -78,11 +78,20 @@ class CanvasCourse(LMSWrapper):
       assignment_group: canvasapi.course.AssignmentGroup,
       title = None,
       *,
-      is_practice=False
+      is_practice=False,
+      description=None
   ):
     if title is None:
       title = f"New Quiz {datetime.now().strftime('%m/%d/%y %H:%M:%S.%f')}"
-    
+
+    if description is None:
+      description = """
+        This quiz is aimed to help you practice skills.
+        Please take it as many times as necessary to get full marks!
+        Please note that although the answers section may be a bit lengthy,
+        below them is often an in-depth explanation on solving the problem!
+      """
+
     q = self.course.create_quiz(quiz={
       "title": title,
       "hide_results" : None,
@@ -92,12 +101,7 @@ class CanvasCourse(LMSWrapper):
       "shuffle_answers": True,
       "assignment_group_id": assignment_group.id,
       "quiz_type" : "assignment" if not is_practice else "practice_quiz",
-      "description": """
-        This quiz is aimed to help you practice skills.
-        Please take it as many times as necessary to get full marks!
-        Please note that although the answers section may be a bit lengthy,
-        below them is often an in-depth explanation on solving the problem!
-      """
+      "description": description
     })
     return q
 
@@ -111,7 +115,7 @@ class CanvasCourse(LMSWrapper):
   ):
     if assignment_group is None:
       assignment_group = self.create_assignment_group()
-    canvas_quiz = self.add_quiz(assignment_group, title, is_practice=is_practice)
+    canvas_quiz = self.add_quiz(assignment_group, title, is_practice=is_practice, description=quiz.description)
     
     total_questions = len(quiz.questions)
     total_variations_created = 0
