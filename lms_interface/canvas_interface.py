@@ -18,7 +18,7 @@ import sys
 import requests
 import io
 
-from .classes import LMSWrapper, Student, Submission, Submission__Canvas
+from .classes import LMSWrapper, Student, Submission, FileSubmission__Canvas, TextSubmission__Canvas, QuizSubmission
 
 import logging
 
@@ -204,6 +204,31 @@ class CanvasCourse(LMSWrapper):
   def get_students(self) -> List[Student]:
     return [Student(s.name, s.id, s) for s in self.course.get_users(enrollment_type=["student"])]
 
+  def get_quiz(self, quiz_id: int) -> Optional[CanvasQuiz]:
+    """Get a specific quiz by ID"""
+    try:
+      return CanvasQuiz(
+        canvas_interface=self.canvas_interface,
+        canvasapi_course=self,
+        canvasapi_quiz=self.course.get_quiz(quiz_id)
+      )
+    except canvasapi.exceptions.ResourceDoesNotExist:
+      log.error(f"Quiz {quiz_id} not found in course \"{self.name}\"")
+      return None
+
+  def get_quizzes(self, **kwargs) -> List[CanvasQuiz]:
+    """Get all quizzes in the course"""
+    quizzes: List[CanvasQuiz] = []
+    for canvasapi_quiz in self.course.get_quizzes(**kwargs):
+      quizzes.append(
+        CanvasQuiz(
+          canvas_interface=self.canvas_interface,
+          canvasapi_course=self,
+          canvasapi_quiz=canvasapi_quiz
+        )
+      )
+    return quizzes
+
 class CanvasAssignment(LMSWrapper):
   def __init__(self, *args, canvasapi_interface: CanvasInterface, canvasapi_course : CanvasCourse, canvasapi_assignment: canvasapi.assignment.Assignment, **kwargs):
     self.canvas_interface = canvasapi_interface
@@ -284,7 +309,7 @@ class CanvasAssignment(LMSWrapper):
     for i, attachment_buffer in enumerate(attachments):
       upload_buffer_as_file(attachment_buffer.read(), attachment_buffer.name)
   
-  def get_submissions(self, only_include_most_recent: bool = True, **kwargs) -> List[Submission__Canvas]:
+  def get_submissions(self, only_include_most_recent: bool = True, **kwargs) -> List[Submission]:
     """
     Gets submission objects (in this case Submission__Canvas objects) that have students and potentially attachments
     :param only_include_most_recent: Include only the most recent submission
@@ -299,7 +324,7 @@ class CanvasAssignment(LMSWrapper):
     
     test_only = kwargs.get("test", False)
     
-    submissions: List[Submission__Canvas] = []
+    submissions: List[Submission] = []
     
     # Get all submissions and their history (which is necessary for attachments when students can resubmit)
     for student_index, canvaspai_submission in enumerate(self.assignment.get_submissions(include='submission_history', **kwargs)):
@@ -323,21 +348,41 @@ class CanvasAssignment(LMSWrapper):
         log.debug(f"Submission: {student_submission['workflow_state']} " +
                   (f"{student_submission['score']:0.2f}" if student_submission['score'] is not None else "None"))
         
-        try:
-          attachments = student_submission["attachments"]
-        except KeyError:
-          log.warning(f"No submissions found for {student.name}")
-          continue
-        
-        # Add submission to list
-        submissions.append(
-          Submission__Canvas(
-            student=student,
-            status=Submission.Status.from_string(student_submission["workflow_state"], student_submission['score']),
-            attachments=attachments,
-            submission_index=student_submission_index
+        # Determine submission type based on content
+        has_attachments = student_submission.get("attachments") is not None and len(student_submission.get("attachments", [])) > 0
+        has_text_body = student_submission.get("body") is not None and student_submission.get("body").strip() != ""
+
+        if has_text_body:
+          # Text submission - create object-like structure from dict
+          log.debug(f"Detected text submission for {student.name}")
+          class SubmissionObject:
+            def __init__(self, data):
+              for key, value in data.items():
+                setattr(self, key, value)
+
+          submissions.append(
+            TextSubmission__Canvas(
+              student=student,
+              status=Submission.Status.from_string(student_submission["workflow_state"], student_submission['score']),
+              canvas_submission_data=SubmissionObject(student_submission),
+              submission_index=student_submission_index
+            )
           )
-        )
+        elif has_attachments:
+          # File submission
+          log.debug(f"Detected file submission for {student.name}")
+          submissions.append(
+            FileSubmission__Canvas(
+              student=student,
+              status=Submission.Status.from_string(student_submission["workflow_state"], student_submission['score']),
+              attachments=student_submission["attachments"],
+              submission_index=student_submission_index
+            )
+          )
+        else:
+          # No submission content found
+          log.debug(f"No submission content found for {student.name}")
+          continue
         
         # Check if we should only include the most recent
         if only_include_most_recent: break
@@ -351,6 +396,106 @@ class CanvasAssignment(LMSWrapper):
   
   def get_students(self):
     return self.canvas_course.get_students()
+
+
+class CanvasQuiz(LMSWrapper):
+  """Canvas quiz interface for handling quiz submissions and responses"""
+
+  def __init__(self, *args, canvas_interface: CanvasInterface, canvasapi_course: CanvasCourse, canvasapi_quiz: canvasapi.quiz.Quiz, **kwargs):
+    self.canvas_interface = canvas_interface
+    self.canvas_course = canvasapi_course
+    self.quiz = canvasapi_quiz
+    super().__init__(_inner=canvasapi_quiz)
+
+  def get_quiz_submissions(self, **kwargs) -> List[QuizSubmission]:
+    """
+    Get all quiz submissions with student responses
+    :param kwargs: Additional parameters for filtering
+    :return: List of QuizSubmission objects
+    """
+    test_only = kwargs.get("test", False)
+    limit = kwargs.get("limit", 1_000_000)
+
+    quiz_submissions: List[QuizSubmission] = []
+
+    # Get all quiz submissions
+    for student_index, canvasapi_quiz_submission in enumerate(self.quiz.get_submissions(**kwargs)):
+
+      # Get the student object for the submission
+      try:
+        student = Student(
+          self.canvas_course.get_username(canvasapi_quiz_submission.user_id),
+          user_id=canvasapi_quiz_submission.user_id,
+          _inner=self.canvas_course.get_user(canvasapi_quiz_submission.user_id)
+        )
+      except Exception as e:
+        log.warning(f"Could not get student info for user_id {canvasapi_quiz_submission.user_id}: {e}")
+        continue
+
+      if test_only and "Test Student" not in student.name:
+        continue
+
+      log.debug(f"Processing quiz submission for {student.name}")
+
+      # Get detailed submission responses
+      try:
+        submission_questions = canvasapi_quiz_submission.get_submission_questions()
+
+        # Convert to our format: question_id -> response
+        student_responses = {}
+        quiz_questions = {}
+
+        for question in submission_questions:
+          question_id = question.id
+          student_responses[question_id] = {
+            'answer': question.answer,
+            'correct': getattr(question, 'correct', None),
+            'points': getattr(question, 'points', 0),
+            'question_type': getattr(question, 'question_type', 'unknown')
+          }
+
+          # Store question metadata
+          quiz_questions[question_id] = {
+            'question_name': getattr(question, 'question_name', ''),
+            'question_text': getattr(question, 'question_text', ''),
+            'question_type': getattr(question, 'question_type', 'unknown'),
+            'points_possible': getattr(question, 'points_possible', 0)
+          }
+
+        # Create QuizSubmission object
+        quiz_submission = QuizSubmission(
+          student=student,
+          status=Submission.Status.from_string(canvasapi_quiz_submission.workflow_state, canvasapi_quiz_submission.score),
+          quiz_submission_data=canvasapi_quiz_submission,
+          student_responses=student_responses,
+          quiz_questions=quiz_questions
+        )
+
+        quiz_submissions.append(quiz_submission)
+
+      except Exception as e:
+        log.error(f"Failed to get submission questions for {student.name}: {e}")
+        continue
+
+      # Check if we are limiting how many students we are checking
+      if student_index >= (limit - 1):
+        break
+
+    return quiz_submissions
+
+  def get_questions(self):
+    """Get all quiz questions"""
+    return self.quiz.get_questions()
+
+  def push_feedback(self, user_id, score: float, comments: str, **kwargs):
+    """
+    Push feedback for a quiz submission
+    Note: Quiz feedback mechanisms may be different from assignment feedback
+    """
+    # Quiz submissions typically don't support the same feedback mechanisms as assignments
+    # This is a placeholder for quiz-specific feedback handling
+    log.warning("Quiz feedback pushing not yet implemented")
+    pass
 
 
 class CanvasHelpers:
