@@ -18,7 +18,7 @@ import sys
 import requests
 import io
 
-from .classes import LMSWrapper, Student, Submission, FileSubmission__Canvas, TextSubmission__Canvas, QuizSubmission
+from .classes import LMSWrapper, Student, Submission, Submission__Canvas
 
 import logging
 
@@ -57,16 +57,16 @@ class CanvasCourse(LMSWrapper):
     self.course = canvasapi_course
     super().__init__(_inner=self.course)
   
-  def create_assignment_group(self, name="dev") -> canvasapi.course.AssignmentGroup:
+  def create_assignment_group(self, name="dev", delete_existing=False) -> canvasapi.course.AssignmentGroup:
     for assignment_group in self.course.get_assignment_groups():
       if assignment_group.name == name:
-        if name == "dev":
+        if delete_existing:
           assignment_group.delete()
           break
         log.info("Found group existing, returning")
         return assignment_group
     assignment_group = self.course.create_assignment_group(
-      name="dev",
+      name=name,
       group_weight=0.0,
       position=0,
     )
@@ -77,11 +77,20 @@ class CanvasCourse(LMSWrapper):
       assignment_group: canvasapi.course.AssignmentGroup,
       title = None,
       *,
-      is_practice=False
+      is_practice=False,
+      description=None
   ):
     if title is None:
       title = f"New Quiz {datetime.now().strftime('%m/%d/%y %H:%M:%S.%f')}"
-    
+
+    if description is None:
+      description = """
+        This quiz is aimed to help you practice skills.
+        Please take it as many times as necessary to get full marks!
+        Please note that although the answers section may be a bit lengthy,
+        below them is often an in-depth explanation on solving the problem!
+      """
+
     q = self.course.create_quiz(quiz={
       "title": title,
       "hide_results" : None,
@@ -91,12 +100,7 @@ class CanvasCourse(LMSWrapper):
       "shuffle_answers": True,
       "assignment_group_id": assignment_group.id,
       "quiz_type" : "assignment" if not is_practice else "practice_quiz",
-      "description": """
-        This quiz is aimed to help you practice skills.
-        Please take it as many times as necessary to get full marks!
-        Please note that although the answers section may be a bit lengthy,
-        below them is often an in-depth explanation on solving the problem!
-      """
+      "description": description
     })
     return q
 
@@ -105,12 +109,14 @@ class CanvasCourse(LMSWrapper):
       quiz: Quiz,
       num_variations: int,
       title: typing.Optional[str] = None,
-      is_practice = False
+      is_practice = False,
+      assignment_group: typing.Optional[canvasapi.course.AssignmentGroup] = None
   ):
-    assignment_group = self.create_assignment_group()
-    canvas_quiz = self.add_quiz(assignment_group, title, is_practice=is_practice)
+    if assignment_group is None:
+      assignment_group = self.create_assignment_group()
+    canvas_quiz = self.add_quiz(assignment_group, title, is_practice=is_practice, description=quiz.description)
     
-    total_questions = len(quiz)
+    total_questions = len(quiz.questions)
     total_variations_created = 0
     log.info(f"Starting to push quiz '{title or canvas_quiz.title}' with {total_questions} questions to Canvas")
     log.info(f"Target: {num_variations} variations per question")
@@ -130,27 +136,32 @@ class CanvasCourse(LMSWrapper):
       # Track all variations across every question, in case we have duplicate questions
       variation_count = 0
       for attempt_number in range(QUESTION_VARIATIONS_TO_TRY):
-        
+
         # Get the question in a format that is ready for canvas (e.g. json)
-        question_for_canvas = question.get__canvas(self.course, canvas_quiz)
+        # Use large gaps between base seeds to avoid overlap with backoff attempts
+        # Each variation gets seeds: base_seed, base_seed+1, base_seed+2, ... for backoffs
+        base_seed = attempt_number * 1000
+        question_for_canvas = question.get__canvas(self.course, canvas_quiz, rng_seed=base_seed)
+
         question_fingerprint = question_for_canvas["question_text"]
         try:
           question_fingerprint += ''.join([str(a["answer_text"]) for a in question_for_canvas["answers"]])
         except TypeError as e:
           log.error(e)
           log.warning("Continuing anyway")
-          
-        
+
+
         # if it is in the variations that we have already seen then skip ahead, else track
         if question_fingerprint in all_variations:
           continue
         all_variations.add(question_fingerprint)
-        
+
         # Set group ID to add it to the question group
         question_for_canvas["quiz_group_id"] = group.id
-        
+
         # Push question to canvas
         log.debug(f"Pushing #{question_i} ({question.name}) {variation_count+1} / {num_variations} to canvas...")
+
         try:
           canvas_quiz.create_question(question=question_for_canvas)
           total_variations_created += 1
@@ -160,7 +171,7 @@ class CanvasCourse(LMSWrapper):
           log.warning("Sleeping for 1s...")
           time.sleep(1)
           continue
-        
+
         # Update and check variations already seen
         variation_count += 1
         if variation_count >= num_variations:
