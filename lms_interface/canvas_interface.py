@@ -39,7 +39,7 @@ class CanvasInterface(LMSWrapper):
     else:
       log.info("Using canvas DEV")
       self.canvas_url = os.environ.get("CANVAS_API_URL")
-      self.canvas_key = os.environ.get("CANVAS_API_KEY_prod")
+      self.canvas_key = os.environ.get("CANVAS_API_KEY")
     self.canvas = canvasapi.Canvas(self.canvas_url, self.canvas_key)
     
     super().__init__(_inner=self.canvas)
