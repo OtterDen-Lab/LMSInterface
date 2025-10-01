@@ -476,7 +476,7 @@ class CanvasQuiz(LMSWrapper):
         # Create QuizSubmission object
         quiz_submission = QuizSubmission(
           student=student,
-          status=Submission.Status.from_string(canvasapi_quiz_submission.workflow_state, canvasapi_quiz_submission.score),
+          status=Submission.Status.from_string(canvasapi_quiz_submission.workflow_state, canvasapi_quiz_submission.percentage_score),
           quiz_submission_data=canvasapi_quiz_submission,
           student_responses=student_responses,
           quiz_questions=quiz_questions
@@ -548,7 +548,7 @@ class CanvasHelpers:
   @staticmethod
   def get_unsubmitted_submissions(interface: CanvasCourse, assignment: canvasapi.assignment.Assignment) -> List[canvasapi.submission.Submission]:
     submissions : List[canvasapi.submission.Submission] = list(filter(
-      lambda s: s.submitted_at is None and s.score is None and not s.excused,
+      lambda s: s.submitted_at is None and s.percentage_score is None and not s.excused,
       assignment.get_submissions()
     ))
     return submissions
