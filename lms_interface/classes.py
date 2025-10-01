@@ -213,25 +213,25 @@ Submission__Canvas = FileSubmission__Canvas
 @functools.total_ordering
 @dataclasses.dataclass
 class Feedback:
-  score: Optional[float] = None
+  percentage_score: Optional[float] = None
   comments: str = ""
   attachments: List[io.BytesIO] = dataclasses.field(default_factory=list)
   
   def __str__(self):
     short_comment = self.comments[:10].replace('\n', '\\n')
     ellipsis = '...' if len(self.comments) > 10 else ''
-    return f"Feedback({self.score:.4g}, {short_comment}{ellipsis})"
+    return f"Feedback({self.percentage_score:.4g}%, {short_comment}{ellipsis})"
 
   def __eq__(self, other):
     if not isinstance(other, Feedback):
       return NotImplemented
-    return self.score == other.score
+    return self.percentage_score == other.percentage_score
   
   def __lt__(self, other):
     if not isinstance(other, Feedback):
       return NotImplemented
-    if self.score is None:
+    if self.percentage_score is None:
       return False  # None is treated as greater than any other value
-    if other.score is None:
+    if other.percentage_score is None:
       return True
-    return self.score < other.score
+    return self.percentage_score < other.percentage_score
