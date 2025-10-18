@@ -1,6 +1,7 @@
 #!env python
 from __future__ import annotations
 
+import queue
 import tempfile
 import time
 import typing
@@ -14,9 +15,38 @@ import canvasapi.assignment
 import canvasapi.submission
 import canvasapi.exceptions
 import dotenv, os
-import sys
 import requests
-import io
+import canvasapi.requester as cap_req
+import canvasapi.canvas as cap_canvas
+from canvasapi import Canvas
+
+try:
+  from urllib3.util.retry import Retry  # urllib3 v2
+except Exception:
+  from urllib3.util import Retry        # urllib3 v1 fallback
+
+import os
+import time
+import requests
+import dotenv
+
+import canvasapi.requester as cap_req
+import canvasapi.canvas as cap_canvas
+from canvasapi import Canvas
+
+try:
+  from urllib3.util.retry import Retry  # urllib3 v2
+except Exception:
+  from urllib3.util import Retry        # urllib3 v1
+
+from requests.adapters import HTTPAdapter
+from requests.exceptions import (
+  RequestException,
+  ConnectionError,
+  Timeout,
+  HTTPError,
+  ChunkedEncodingError,
+)
 
 from .classes import LMSWrapper, Student, Submission, Submission__Canvas, FileSubmission__Canvas, TextSubmission__Canvas, QuizSubmission
 
@@ -26,13 +56,88 @@ log = logging.getLogger(__name__)
 
 
 QUESTION_VARIATIONS_TO_TRY = 1000
+NUM_WORKERS = 4
+log = logging.getLogger(__name__)
+import os
+import time
+import logging
+import requests
+import dotenv
+
+import canvasapi.requester as cap_req
+import canvasapi.canvas as cap_canvas
+from canvasapi import Canvas
+
+try:
+  from urllib3.util.retry import Retry  # urllib3 v2
+except Exception:
+  from urllib3.util import Retry        # urllib3 v1
+
+from requests.adapters import HTTPAdapter
+from requests.exceptions import (
+  RequestException,
+  ConnectionError,
+  Timeout,
+  HTTPError,
+  ChunkedEncodingError,
+)
+
+log = logging.getLogger(__name__)
+log.setLevel(logging.DEBUG)
+# ---- global requests patch: timeout + resilient transport retries
+import time
+import requests
+from requests.exceptions import (
+  Timeout,
+  ConnectionError,
+  ChunkedEncodingError,
+  RequestException,
+  HTTPError,
+)
+
+_ORIG_SESSION_REQUEST = requests.sessions.Session.request
+_ORIG_API_REQUEST = requests.api.request  # requests.request calls this
+
+def _retry_forever_request(send_fn, *, label):
+  def _wrapped(*args, **kwargs):
+    # make sure every call has a timeout unless caller set one
+    kwargs.setdefault("timeout", (5, 8))  # connect, read
+    attempt = 0
+    while True:
+      attempt += 1
+      try:
+        return send_fn(*args, **kwargs)
+      except HTTPError as he:
+        # Don't loop forever on non-transient HTTP statuses; propagate.
+        raise
+      except (Timeout, ConnectionError, ChunkedEncodingError, RequestException) as e:
+        # Wi-Fi off / DHCP churn / router swap / dropped TLS, etc.
+        delay = min(10.0, 2 ** (attempt - 1))  # 1,2,4,8,10,10,...
+        log.debug("%s transport error %s; retrying in %.1fs (attempt %d)",
+                  label, type(e).__name__, delay, attempt)
+        time.sleep(delay)
+        # loop and retry
+  return _wrapped
+
+# Patch both entry points so no matter which path canvasapi uses, we wrap it
+requests.sessions.Session.request = _retry_forever_request(
+  _ORIG_SESSION_REQUEST, label="Session.request"
+)
+requests.api.request = _retry_forever_request(
+  _ORIG_API_REQUEST, label="api.request"
+)
+
+# (optional) safety: global socket default timeout as a last line of defense
+import socket
+socket.setdefaulttimeout(15)
 
 
-class CanvasInterface(LMSWrapper):
+class CanvasInterface:
   def __init__(self, *, prod=False):
     dotenv.load_dotenv(os.path.join(os.path.expanduser("~"), ".env"))
-    log.debug(os.environ.get("CANVAS_API_URL"))
-    if prod:
+
+    self.prod = prod
+    if self.prod:
       log.warning("Using canvas PROD!")
       self.canvas_url = os.environ.get("CANVAS_API_URL_prod")
       self.canvas_key = os.environ.get("CANVAS_API_KEY_prod")
@@ -40,9 +145,12 @@ class CanvasInterface(LMSWrapper):
       log.info("Using canvas DEV")
       self.canvas_url = os.environ.get("CANVAS_API_URL")
       self.canvas_key = os.environ.get("CANVAS_API_KEY")
-    self.canvas = canvasapi.Canvas(self.canvas_url, self.canvas_key)
+
+    # Monkeypatch BEFORE constructing Canvas so all children use RobustRequester.
+    # cap_req.Requester = RobustRequester
+    # cap_canvas.Requester = RobustRequester
+    self.canvas = Canvas(self.canvas_url, self.canvas_key)
     
-    super().__init__(_inner=self.canvas)
     
   def get_course(self, course_id: int) -> CanvasCourse:
     return CanvasCourse(
@@ -121,7 +229,10 @@ class CanvasCourse(LMSWrapper):
     log.info(f"Starting to push quiz '{title or canvas_quiz.title}' with {total_questions} questions to Canvas")
     log.info(f"Target: {num_variations} variations per question")
     
-    all_variations = set()
+    all_variations = set() # Track all variations so we can ensure we aren't uploading duplicates
+    questions_to_upload = queue.Queue() # Make a queue of questions to upload so we can do so in the background
+    
+    # Generate all quiz questions
     for question_i, question in enumerate(quiz):
       log.info(f"Processing question {question_i + 1}/{total_questions}: '{question.name}'")
   
@@ -150,28 +261,20 @@ class CanvasCourse(LMSWrapper):
           log.error(e)
           log.warning("Continuing anyway")
 
-
         # if it is in the variations that we have already seen then skip ahead, else track
         if question_fingerprint in all_variations:
           continue
         all_variations.add(question_fingerprint)
-
+        
+        # Push question to canvas
+        log.info(f"Creating #{question_i} ({question.name}) {variation_count + 1} / {num_variations} for canvas.")
+        
         # Set group ID to add it to the question group
         question_for_canvas["quiz_group_id"] = group.id
 
-        # Push question to canvas
-        log.debug(f"Pushing #{question_i} ({question.name}) {variation_count+1} / {num_variations} to canvas...")
-
-        try:
-          canvas_quiz.create_question(question=question_for_canvas)
-          total_variations_created += 1
-        except canvasapi.exceptions.CanvasException as e:
-          log.warning("Encountered Canvas error.")
-          log.warning(e)
-          log.warning("Sleeping for 1s...")
-          time.sleep(1)
-          continue
-
+        questions_to_upload.put(question_for_canvas)
+        total_variations_created += 1
+      
         # Update and check variations already seen
         variation_count += 1
         if variation_count >= num_variations:
@@ -180,6 +283,25 @@ class CanvasCourse(LMSWrapper):
           break
       
       log.info(f"Completed question '{question.name}': {variation_count} variations created")
+
+    # Then inject:
+    # self.canvas_interface.requester = RobustRequester(self.canvas_interface.canvas_url, self.canvas_interface.canvas_key)
+    
+    # canvas_quiz._requester = RobustRequester(self.canvas_interface.canvas_url, self.canvas_interface.canvas_key)
+    # Upload questions
+    num_questions_to_upload = questions_to_upload.qsize()
+    while not questions_to_upload.empty():
+      q_to_upload = questions_to_upload.get()
+      log.info(f"Uploading {num_questions_to_upload-questions_to_upload.qsize()} / {num_questions_to_upload} to canvas")
+
+      try:
+        canvas_quiz.create_question(question=q_to_upload)
+      except canvasapi.exceptions.CanvasException as e:
+        log.warning("Encountered Canvas error.")
+        log.warning(e)
+        log.warning("Sleeping for 1s...")
+        time.sleep(1)
+        continue
     
     log.info(f"Quiz upload completed! Total variations created: {total_variations_created}")
     log.info(f"Canvas quiz URL: {canvas_quiz.html_url}")
@@ -239,6 +361,7 @@ class CanvasCourse(LMSWrapper):
         )
       )
     return quizzes
+
 
 class CanvasAssignment(LMSWrapper):
   def __init__(self, *args, canvasapi_interface: CanvasInterface, canvasapi_course : CanvasCourse, canvasapi_assignment: canvasapi.assignment.Assignment, **kwargs):
@@ -545,6 +668,7 @@ class CanvasHelpers:
         log.warning(f"Cannot find any lock dates for assignment {assignment.name}!")
     
     return closed_assignments
+  
   @staticmethod
   def get_unsubmitted_submissions(interface: CanvasCourse, assignment: canvasapi.assignment.Assignment) -> List[canvasapi.submission.Submission]:
     submissions : List[canvasapi.submission.Submission] = list(filter(
@@ -557,7 +681,6 @@ class CanvasHelpers:
   def clear_out_missing(cls, interface: CanvasCourse):
     assignments = cls.get_closed_assignments(interface)
     for assignment in assignments:
-      # if "PA6" not in assignment.name: continue
       missing_submissions = cls.get_unsubmitted_submissions(interface, assignment)
       if not missing_submissions:
         continue
@@ -566,7 +689,6 @@ class CanvasHelpers:
         log.info(f"{submission.user_id} ({interface.get_username(submission.user_id)}) : {submission.workflow_state} : {submission.missing} : {submission.score} : {submission.grader_id} : {submission.graded_at}")
         submission.edit(submission={"late_policy_status" : "missing"})
       log.info("")
-  
   
   @staticmethod
   def deprecate_assignment(canvas_course: CanvasCourse, assignment_id) -> List[canvasapi.assignment.Assignment]:

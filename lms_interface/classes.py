@@ -31,13 +31,11 @@ class LMSWrapper():
       return lambda *args, **kwargs: None  # Returns a no-op function for method calls
 
 
-
 @dataclasses.dataclass
 class Student(LMSWrapper):
   name : str
   user_id : int
   _inner : canvasapi.canvas.User
-  
   
 
 class Submission:
