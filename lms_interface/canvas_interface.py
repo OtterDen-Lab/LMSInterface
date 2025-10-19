@@ -284,10 +284,6 @@ class CanvasCourse(LMSWrapper):
       
       log.info(f"Completed question '{question.name}': {variation_count} variations created")
 
-    # Then inject:
-    # self.canvas_interface.requester = RobustRequester(self.canvas_interface.canvas_url, self.canvas_interface.canvas_key)
-    
-    # canvas_quiz._requester = RobustRequester(self.canvas_interface.canvas_url, self.canvas_interface.canvas_key)
     # Upload questions
     num_questions_to_upload = questions_to_upload.qsize()
     while not questions_to_upload.empty():
@@ -414,11 +410,10 @@ class CanvasAssignment(LMSWrapper):
       # todo: clobbering should probably be moved up or made into a different function for cleanliness.
       for comment in submission.submission_comments:
         comment_id = comment['id']
-        # Construct the URL to delete the comment
-        delete_url = f"{self.canvas_interface.canvas_url}/api/v1/courses/{self.canvas_course.course.id}/assignments/{self.assignment.id}/submissions/{user_id}/comments/{comment_id}"
         
-        # Make the DELETE request to delete the comment
-        response = requests.delete(delete_url, headers={"Authorization": f"Bearer {self.canvas_interface.canvas_key}"})
+        # Construct the URL to delete the comment
+        api_path = f"/api/v1/courses/{self.canvas_course.course.id}/assignments/{self.assignment.id}/submissions/{user_id}/comments/{comment_id}"
+        response = self.canvas_interface.canvas._Canvas__requester.request("DELETE", api_path)
         if response.status_code == 200:
           log.info(f"Deleted comment {comment_id}")
         else:
