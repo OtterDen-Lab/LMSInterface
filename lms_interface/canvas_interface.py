@@ -23,6 +23,8 @@ try:
 except Exception:
   from urllib3.util import Retry        # urllib3 v1 fallback
 
+from canvasapi import Canvas
+
 import os
 import dotenv
 
@@ -59,6 +61,23 @@ class CanvasInterface:
     return CanvasCourse(
       canvas_interface = self,
       canvasapi_course = self.canvas.get_course(course_id)
+    )
+
+  def make_extra_API_call(self, action : str, url_additions : str, payload: typing.Dict):
+    """
+    Interface for using the requester object inside of canvas to make a call, and allows subobjects (e.g. courses and assignments) to pass upwards
+    Args:
+      action: GET, DELETE, POST, etc. (HTTP actions)
+      url_additions: extra parts to add on to the URL for a specific call (e.g. "/courses/{course_id}/rubrics")
+      payload: The specific payload to execute at the location (e.g. for a rubric, the contents of it)
+
+    Returns:
+
+    """
+    return self.canvas._Canvas__requester.request(
+      action,
+      f"/apt/v1/{url_additions}",
+      _kwargs=combine_kwargs(payload)
     )
 
 
@@ -138,7 +157,6 @@ class CanvasCourse(LMSWrapper):
     # Generate all quiz questions
     for question_i, question in enumerate(quiz):
       log.info(f"Processing question {question_i + 1}/{total_questions}: '{question.name}'")
-  
       group : canvasapi.quiz.QuizGroup = canvas_quiz.create_question_group([
         {
           "name": f"{question.name}",
@@ -150,7 +168,6 @@ class CanvasCourse(LMSWrapper):
       # Track all variations across every question, in case we have duplicate questions
       variation_count = 0
       for attempt_number in range(QUESTION_VARIATIONS_TO_TRY):
-
         # Get the question in a format that is ready for canvas (e.g. json)
         # Use large gaps between base seeds to avoid overlap with backoff attempts
         # Each variation gets seeds: base_seed, base_seed+1, base_seed+2, ... for backoffs
@@ -260,6 +277,23 @@ class CanvasCourse(LMSWrapper):
         )
       )
     return quizzes
+
+  def make_extra_API_call(self, action : str, url_additions : str, payload: typing.Dict):
+    """
+    Interface for using the requester object inside of canvas to make a call, and allows subobjects (e.g. courses and assignments) to pass upwards
+    Args:
+      action: GET, DELETE, POST, etc. (HTTP actions)
+      url_additions: extra parts to add on to the URL for a specific call (e.g. "/courses/{course_id}/rubrics")
+      payload: The specific payload to execute at the location (e.g. for a rubric, the contents of it)
+
+    Returns:
+
+    """
+    return self.canvas_interface.make_extra_API_call(
+      action,
+      f"courses/{self.course.id}/{url_additions}",
+      payload
+    )
 
 
 class CanvasAssignment(LMSWrapper):
@@ -429,6 +463,22 @@ class CanvasAssignment(LMSWrapper):
   def get_students(self):
     return self.canvas_course.get_students()
 
+  def make_extra_API_call(self, action : str, url_additions : str, payload: typing.Dict):
+    """
+    Interface for using the requester object inside of canvas to make a call, and allows subobjects (e.g. courses and assignments) to pass upwards
+    Args:
+      action: GET, DELETE, POST, etc. (HTTP actions)
+      url_additions: extra parts to add on to the URL for a specific call (e.g. "/courses/{course_id}/rubrics")
+      payload: The specific payload to execute at the location (e.g. for a rubric, the contents of it)
+
+    Returns:
+
+    """
+    return self.canvas_interface.make_extra_API_call(
+      action,
+      f"assignments/{self.assignment.id}/{url_additions}",
+      payload
+    )
 
 class CanvasQuiz(LMSWrapper):
   """Canvas quiz interface for handling quiz submissions and responses"""
@@ -618,5 +668,8 @@ class CanvasHelpers:
           log.debug(assignment)
           for submission in assignment.get_submissions():
             submission.mark_unread()
-          
+  
+  @classmethod
+  def upload_rubric(cls, course_id, rubric):
+    pass
     
