@@ -16,9 +16,7 @@ import canvasapi.submission
 import canvasapi.exceptions
 import dotenv, os
 import requests
-import canvasapi.requester as cap_req
-import canvasapi.canvas as cap_canvas
-from canvasapi import Canvas
+from canvasapi.util import combine_kwargs
 
 try:
   from urllib3.util.retry import Retry  # urllib3 v2
@@ -26,27 +24,7 @@ except Exception:
   from urllib3.util import Retry        # urllib3 v1 fallback
 
 import os
-import time
-import requests
 import dotenv
-
-import canvasapi.requester as cap_req
-import canvasapi.canvas as cap_canvas
-from canvasapi import Canvas
-
-try:
-  from urllib3.util.retry import Retry  # urllib3 v2
-except Exception:
-  from urllib3.util import Retry        # urllib3 v1
-
-from requests.adapters import HTTPAdapter
-from requests.exceptions import (
-  RequestException,
-  ConnectionError,
-  Timeout,
-  HTTPError,
-  ChunkedEncodingError,
-)
 
 from .classes import LMSWrapper, Student, Submission, Submission__Canvas, FileSubmission__Canvas, TextSubmission__Canvas, QuizSubmission
 
@@ -54,82 +32,8 @@ import logging
 
 log = logging.getLogger(__name__)
 
-
 QUESTION_VARIATIONS_TO_TRY = 1000
 NUM_WORKERS = 4
-log = logging.getLogger(__name__)
-import os
-import time
-import logging
-import requests
-import dotenv
-
-import canvasapi.requester as cap_req
-import canvasapi.canvas as cap_canvas
-from canvasapi import Canvas
-
-try:
-  from urllib3.util.retry import Retry  # urllib3 v2
-except Exception:
-  from urllib3.util import Retry        # urllib3 v1
-
-from requests.adapters import HTTPAdapter
-from requests.exceptions import (
-  RequestException,
-  ConnectionError,
-  Timeout,
-  HTTPError,
-  ChunkedEncodingError,
-)
-
-log = logging.getLogger(__name__)
-log.setLevel(logging.DEBUG)
-# ---- global requests patch: timeout + resilient transport retries
-import time
-import requests
-from requests.exceptions import (
-  Timeout,
-  ConnectionError,
-  ChunkedEncodingError,
-  RequestException,
-  HTTPError,
-)
-
-_ORIG_SESSION_REQUEST = requests.sessions.Session.request
-_ORIG_API_REQUEST = requests.api.request  # requests.request calls this
-
-def _retry_forever_request(send_fn, *, label):
-  def _wrapped(*args, **kwargs):
-    # make sure every call has a timeout unless caller set one
-    kwargs.setdefault("timeout", (5, 8))  # connect, read
-    attempt = 0
-    while True:
-      attempt += 1
-      try:
-        return send_fn(*args, **kwargs)
-      except HTTPError as he:
-        # Don't loop forever on non-transient HTTP statuses; propagate.
-        raise
-      except (Timeout, ConnectionError, ChunkedEncodingError, RequestException) as e:
-        # Wi-Fi off / DHCP churn / router swap / dropped TLS, etc.
-        delay = min(10.0, 2 ** (attempt - 1))  # 1,2,4,8,10,10,...
-        log.debug("%s transport error %s; retrying in %.1fs (attempt %d)",
-                  label, type(e).__name__, delay, attempt)
-        time.sleep(delay)
-        # loop and retry
-  return _wrapped
-
-# Patch both entry points so no matter which path canvasapi uses, we wrap it
-requests.sessions.Session.request = _retry_forever_request(
-  _ORIG_SESSION_REQUEST, label="Session.request"
-)
-requests.api.request = _retry_forever_request(
-  _ORIG_API_REQUEST, label="api.request"
-)
-
-# (optional) safety: global socket default timeout as a last line of defense
-import socket
-socket.setdefaulttimeout(15)
 
 
 class CanvasInterface:
@@ -150,7 +54,6 @@ class CanvasInterface:
     # cap_req.Requester = RobustRequester
     # cap_canvas.Requester = RobustRequester
     self.canvas = Canvas(self.canvas_url, self.canvas_key)
-    
     
   def get_course(self, course_id: int) -> CanvasCourse:
     return CanvasCourse(
@@ -288,13 +191,13 @@ class CanvasCourse(LMSWrapper):
     num_questions_to_upload = questions_to_upload.qsize()
     while not questions_to_upload.empty():
       q_to_upload = questions_to_upload.get()
-      log.info(f"Uploading {num_questions_to_upload-questions_to_upload.qsize()} / {num_questions_to_upload} to canvas")
-
+      log.info(f"Uploading {num_questions_to_upload-questions_to_upload.qsize()} / {num_questions_to_upload} to canvas!")
       try:
         canvas_quiz.create_question(question=q_to_upload)
       except canvasapi.exceptions.CanvasException as e:
         log.warning("Encountered Canvas error.")
         log.warning(e)
+        questions_to_upload.put(q_to_upload)
         log.warning("Sleeping for 1s...")
         time.sleep(1)
         continue
