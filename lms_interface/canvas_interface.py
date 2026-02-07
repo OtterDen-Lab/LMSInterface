@@ -34,6 +34,28 @@ log = logging.getLogger(__name__)
 
 QUESTION_VARIATIONS_TO_TRY = 1000
 NUM_WORKERS = 4
+MAX_UPLOAD_RETRIES = 50
+RETRY_BACKOFF_BASE = 1.0
+RETRY_BACKOFF_MAX = 10.0
+
+
+def _canvas_exception_status(exc: Exception) -> Optional[int]:
+  status = getattr(exc, "status_code", None)
+  if status is not None:
+    return status
+  response = getattr(exc, "response", None)
+  return getattr(response, "status_code", None)
+
+
+def _is_retryable_canvas_exception(exc: Exception) -> bool:
+  status = _canvas_exception_status(exc)
+  if status is None:
+    return True
+  if status == 429:
+    return True
+  if 500 <= status <= 599:
+    return True
+  return False
 
 
 class CanvasInterface:
@@ -121,7 +143,10 @@ class CanvasCourse(LMSWrapper):
       num_variations: int,
       title: typing.Optional[str] = None,
       is_practice = False,
-      assignment_group: typing.Optional[canvasapi.course.AssignmentGroup] = None
+      assignment_group: typing.Optional[canvasapi.course.AssignmentGroup] = None,
+      max_upload_retries: int = MAX_UPLOAD_RETRIES,
+      retry_backoff_base: float = RETRY_BACKOFF_BASE,
+      retry_backoff_max: float = RETRY_BACKOFF_MAX
   ):
     if assignment_group is None:
       assignment_group = self.create_assignment_group()
@@ -134,6 +159,7 @@ class CanvasCourse(LMSWrapper):
     
     all_variations = set() # Track all variations so we can ensure we aren't uploading duplicates
     questions_to_upload = queue.Queue() # Make a queue of questions to upload so we can do so in the background
+    retry_counts: dict[str, int] = {}
     
     # Generate all quiz questions
     for question_i, question in enumerate(quiz):
@@ -180,7 +206,10 @@ class CanvasCourse(LMSWrapper):
         # Set group ID to add it to the question group
         question_for_canvas["quiz_group_id"] = group.id
 
-        questions_to_upload.put(question_for_canvas)
+        questions_to_upload.put({
+          "question": question_for_canvas,
+          "fingerprint": question_fingerprint
+        })
         total_variations_created += 1
       
         # Update and check variations already seen
@@ -195,16 +224,27 @@ class CanvasCourse(LMSWrapper):
     # Upload questions
     num_questions_to_upload = questions_to_upload.qsize()
     while not questions_to_upload.empty():
-      q_to_upload = questions_to_upload.get()
+      queued_item = questions_to_upload.get()
+      q_to_upload = queued_item["question"]
+      fingerprint = queued_item["fingerprint"]
       log.info(f"Uploading {num_questions_to_upload-questions_to_upload.qsize()} / {num_questions_to_upload} to canvas!")
       try:
         canvas_quiz.create_question(question=q_to_upload)
       except canvasapi.exceptions.CanvasException as e:
         log.warning("Encountered Canvas error.")
         log.warning(e)
-        questions_to_upload.put(q_to_upload)
-        log.warning("Sleeping for 1s...")
-        time.sleep(1)
+        if not _is_retryable_canvas_exception(e):
+          log.error(f"Non-retryable Canvas error; dropping question: {fingerprint}")
+          continue
+        retry_count = retry_counts.get(fingerprint, 0) + 1
+        if retry_count > max_upload_retries:
+          log.error(f"Exceeded max retries ({max_upload_retries}); dropping question: {fingerprint}")
+          continue
+        retry_counts[fingerprint] = retry_count
+        sleep_s = min(retry_backoff_base * (2 ** (retry_count - 1)), retry_backoff_max)
+        log.warning(f"Retrying in {sleep_s:.1f}s (attempt {retry_count}/{max_upload_retries})")
+        time.sleep(sleep_s)
+        questions_to_upload.put(queued_item)
         continue
     
     log.info(f"Quiz upload completed! Total variations created: {total_variations_created}")
@@ -231,8 +271,6 @@ class CanvasCourse(LMSWrapper):
           canvasapi_assignment=canvasapi_assignment
         )
       )
-    
-    assignments = self.course.get_assignments(**kwargs)
     return assignments
   
   def get_username(self, user_id: int):
