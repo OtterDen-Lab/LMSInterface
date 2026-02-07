@@ -25,6 +25,22 @@ pytest
 
 Tests live in `lms_interface/tests/` so they vendor cleanly.
 
+## Parallel Uploads
+
+Question uploads support multi-threading to speed up large quizzes. The default
+behavior uses a small worker pool and limits in-flight requests.
+
+Defaults:
+
+- `max_workers = 4`
+- `max_in_flight = 8`
+
+If any worker receives a Canvas `429`, all workers respect a shared backoff
+window before continuing.
+
+You can override these via `CanvasCourse.create_question(...)` or by calling
+the lower-level `_upload_question_payloads(...)`.
+
 ## Vendoring
 
 Use the shared script to vendor into another project:
