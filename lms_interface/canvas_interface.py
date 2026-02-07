@@ -46,6 +46,32 @@ def _is_retryable_canvas_exception(exc: Exception) -> bool:
   return False
 
 
+def _format_canvas_exception(exc: Exception) -> str:
+  status = _canvas_exception_status(exc)
+  parts = []
+  if status is not None:
+    parts.append(f"status={status}")
+  response = getattr(exc, "response", None)
+  if response is not None:
+    method = getattr(response, "request", None)
+    if method is not None:
+      req_method = getattr(method, "method", None)
+      req_url = getattr(method, "url", None)
+      if req_method or req_url:
+        parts.append(f"request={req_method} {req_url}".strip())
+    try:
+      json_payload = response.json()
+      parts.append(f"response={json_payload}")
+    except Exception:
+      try:
+        text = getattr(response, "text", None)
+        if text:
+          parts.append(f"response_text={text[:200]}")
+      except Exception:
+        pass
+  return " | ".join(parts)
+
+
 class CanvasInterface:
   def __init__(self, *, prod=False, env_path: str | None = None):
     if env_path:
@@ -273,6 +299,9 @@ class CanvasCourse(LMSWrapper):
       except canvasapi.exceptions.CanvasException as e:
         log.warning("Encountered Canvas error.")
         log.warning(e)
+        extra = _format_canvas_exception(e)
+        if extra:
+          log.warning(extra)
         if not _is_retryable_canvas_exception(e):
           log.error(f"Non-retryable Canvas error; dropping question: {label}")
           return False
@@ -362,6 +391,9 @@ class CanvasAssignment(LMSWrapper):
         score = submission.score
     except (requests.exceptions.RequestException, canvasapi.exceptions.CanvasException) as e:
       log.warning(f"No previous submission found for {user_id}: {e}")
+      extra = _format_canvas_exception(e)
+      if extra:
+        log.warning(extra)
     
     # Update the assignment
     # Note: the bulk_update will create a submission if none exists
@@ -376,6 +408,9 @@ class CanvasAssignment(LMSWrapper):
       submission = self.assignment.get_submission(user_id)
     except (requests.exceptions.RequestException, canvasapi.exceptions.CanvasException) as e:
       log.error(e)
+      extra = _format_canvas_exception(e)
+      if extra:
+        log.error(extra)
       log.debug(f"Failed on user_id = {user_id})")
       log.debug(f"username: {self.canvas_course.get_user(user_id)}")
       return
