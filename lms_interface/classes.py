@@ -7,6 +7,7 @@ import dataclasses
 import functools
 import io
 import os
+import typing
 import urllib.request
 
 
@@ -67,9 +68,9 @@ class Submission:
   ):
     self._student: Student | None = student
     self.status = status
-    self.input_files = None
+    self.input_files: list[io.BytesIO] | None = None
     self.feedback : Feedback | None = None
-    self.extra_info = {}
+    self.extra_info: dict[str, typing.Any] = {}
 
   @property
   def student(self):
@@ -93,7 +94,7 @@ class FileSubmission(Submission):
   """Base class for submissions that contain files (e.g., programming assignments)"""
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
-    self._files = None
+    self._files: list[io.BytesIO] | None = None
 
   @property
   def files(self):
