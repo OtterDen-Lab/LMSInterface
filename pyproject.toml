@@ -12,7 +12,7 @@ description = "LMS interface library for teaching tools"
 authors = [
     {name = "Sam Ogden", email = "samuel.s.ogden@gmail.com"},
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 dependencies = [
     "canvasapi==3.2.0",
     "requests==2.32.2",
@@ -29,9 +29,13 @@ dev = [
 
 [tool.black]
 line-length = 88
-target-version = ['py39']
+target-version = ['py312']
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["lms_interface/tests"]
+addopts = "-q"
