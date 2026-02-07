@@ -4,7 +4,6 @@ from __future__ import annotations
 import itertools
 import tempfile
 import time
-from collections import deque
 from datetime import datetime, timezone
 
 import canvasapi
@@ -247,54 +246,46 @@ class CanvasCourse(LMSWrapper):
       retry_backoff_base: float = RETRY_BACKOFF_BASE,
       retry_backoff_max: float = RETRY_BACKOFF_MAX
   ) -> None:
-    payload_iter = iter(payloads)
-    queue = deque()
-    retry_counts: dict[int, int] = {}
-    total = 0
-    index = 0
-
-    def enqueue_next() -> bool:
-      nonlocal index, total
-      try:
-        payload = next(payload_iter)
-      except StopIteration:
-        return False
-      queue.append((index, payload))
-      index += 1
-      total = max(total, index)
-      return True
-
-    # Prime the queue with the first payload (if any).
-    enqueue_next()
-
-    while queue:
-      index, payload = queue.popleft()
+    for index, payload in enumerate(payloads):
       label = payload.get("question_name", f"question_{index}")
-      log.info(f"Uploading {index + 1} / {max(total, index + 1)} to canvas!")
+      log.info(f"Uploading {index + 1} to canvas!")
+      self._call_canvas_with_retry(
+        label,
+        lambda: canvas_quiz.create_question(question=payload),
+        max_upload_retries=max_upload_retries,
+        retry_backoff_base=retry_backoff_base,
+        retry_backoff_max=retry_backoff_max
+      )
+
+  def _call_canvas_with_retry(
+      self,
+      label: str,
+      func,
+      *,
+      max_upload_retries: int,
+      retry_backoff_base: float,
+      retry_backoff_max: float
+  ) -> bool:
+    for attempt in range(1, max_upload_retries + 1):
       try:
-        canvas_quiz.create_question(question=payload)
-        enqueue_next()
+        func()
+        return True
       except canvasapi.exceptions.CanvasException as e:
         log.warning("Encountered Canvas error.")
         log.warning(e)
         if not _is_retryable_canvas_exception(e):
           log.error(f"Non-retryable Canvas error; dropping question: {label}")
-          enqueue_next()
-          continue
-        retry_count = retry_counts.get(index, 0) + 1
-        if retry_count > max_upload_retries:
+          return False
+        if attempt >= max_upload_retries:
           log.error(f"Exceeded max retries ({max_upload_retries}); dropping question: {label}")
-          enqueue_next()
-          continue
-        retry_counts[index] = retry_count
-        sleep_s = min(retry_backoff_base * (2 ** (retry_count - 1)), retry_backoff_max)
-        remaining = len(queue) + 1  # include current payload
+          return False
+        sleep_s = min(retry_backoff_base * (2 ** (attempt - 1)), retry_backoff_max)
         log.warning(
           f"Retrying {label} in {sleep_s:.1f}s "
-          f"(attempt {retry_count}/{max_upload_retries}, {remaining} pending)"
+          f"(attempt {attempt}/{max_upload_retries})"
         )
         time.sleep(sleep_s)
-        queue.append((index, payload))
+    return False
   
   def get_assignment(self, assignment_id : int) -> CanvasAssignment | None:
     try:
