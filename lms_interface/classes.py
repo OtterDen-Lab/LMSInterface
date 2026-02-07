@@ -25,10 +25,10 @@ class LMSWrapper():
       # Try to get the attribute from the inner instance
       return getattr(self._inner, name)
     except AttributeError:
-      # Handle the case where the inner instance also doesn't have the attribute
-      print(f"Warning: '{name}' not found in either wrapper or inner class")
-      # You can raise the error again, return None, or handle it however you want
-      return lambda *args, **kwargs: None  # Returns a no-op function for method calls
+      # Surface missing attributes instead of silently swallowing errors
+      message = f"'{name}' not found in either wrapper or inner class"
+      log.error(message)
+      raise AttributeError(message)
 
 
 @dataclasses.dataclass

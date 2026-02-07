@@ -3,11 +3,15 @@ __pycache__/
 .DS_Store
 *.zip
 .env
+.envrc
 .venv/
 *.pyc
 *.pyo
 *.pyd
 __pycache__/
+.pytest_cache/
+.mypy_cache/
+CLAUDE.md
 *.so
 .coverage
 htmlcov/

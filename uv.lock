@@ -176,6 +176,7 @@ version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "canvasapi" },
+    { name = "pytest" },
     { name = "python-dotenv" },
     { name = "requests" },
 ]
@@ -194,6 +195,7 @@ requires-dist = [
     { name = "canvasapi", specifier = "==3.2.0" },
     { name = "flake8", marker = "extra == 'dev'" },
     { name = "mypy", marker = "extra == 'dev'" },
+    { name = "pytest", specifier = ">=8.4.2" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "python-dotenv", specifier = "==1.0.1" },
     { name = "requests", specifier = "==2.32.2" },

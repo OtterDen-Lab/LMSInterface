@@ -369,8 +369,8 @@ class CanvasAssignment(LMSWrapper):
       if keep_previous_best and score is not None and submission.score is not None and submission.score > score:
         log.warning(f"Current score ({submission.score}) higher than new score ({score}).  Going to use previous score.")
         score = submission.score
-    except requests.exceptions.ConnectionError as e:
-      log.warning(f"No previous submission found for {user_id}")
+    except (requests.exceptions.RequestException, canvasapi.exceptions.CanvasException) as e:
+      log.warning(f"No previous submission found for {user_id}: {e}")
     
     # Update the assignment
     # Note: the bulk_update will create a submission if none exists
@@ -383,7 +383,7 @@ class CanvasAssignment(LMSWrapper):
       )
       
       submission = self.assignment.get_submission(user_id)
-    except requests.exceptions.ConnectionError as e:
+    except (requests.exceptions.RequestException, canvasapi.exceptions.CanvasException) as e:
       log.error(e)
       log.debug(f"Failed on user_id = {user_id})")
       log.debug(f"username: {self.canvas_course.get_user(user_id)}")

@@ -451,3 +451,43 @@ class TestStudent:
 
         # Should delegate to mock_inner
         assert student.email == "alice@example.com"
+
+
+class TestLMSWrapper:
+    """Tests for LMSWrapper behavior."""
+
+    def test_missing_attribute_raises(self):
+        """Missing attributes should raise AttributeError."""
+        from lms_interface.classes import LMSWrapper
+
+        wrapper = LMSWrapper(_inner=object())
+
+        with pytest.raises(AttributeError, match="not found in either wrapper or inner class"):
+            _ = wrapper.does_not_exist
+
+
+class TestPushFeedbackErrors:
+    """Tests for CanvasAssignment.push_feedback error handling."""
+
+    def test_canvas_exception_on_get_submission_is_handled(self):
+        """Canvas exceptions should be handled and not crash."""
+        import canvasapi.exceptions
+        from lms_interface.canvas_interface import CanvasAssignment, CanvasCourse, CanvasInterface
+
+        mock_interface = Mock(spec=CanvasInterface)
+        mock_course = Mock()
+        mock_course.get_user.return_value = Mock()
+        mock_course.course = Mock()
+
+        mock_assignment = Mock()
+        mock_assignment.get_submission.side_effect = canvasapi.exceptions.CanvasException("boom")
+        mock_assignment.submissions_bulk_update.side_effect = canvasapi.exceptions.CanvasException("boom2")
+
+        assignment = CanvasAssignment(
+            canvasapi_interface=mock_interface,
+            canvasapi_course=mock_course,
+            canvasapi_assignment=mock_assignment
+        )
+
+        # Should not raise
+        assignment.push_feedback(user_id=123, score=10.0, comments="Hi", attachments=[])

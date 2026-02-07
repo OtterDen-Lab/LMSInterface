@@ -17,6 +17,7 @@ dependencies = [
     "canvasapi==3.2.0",
     "requests==2.32.2",
     "python-dotenv==1.0.1",
+    "pytest>=8.4.2",
 ]
 
 [project.optional-dependencies]
