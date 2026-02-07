@@ -59,8 +59,11 @@ def _is_retryable_canvas_exception(exc: Exception) -> bool:
 
 
 class CanvasInterface:
-  def __init__(self, *, prod=False):
-    dotenv.load_dotenv(os.path.join(os.path.expanduser("~"), ".env"))
+  def __init__(self, *, prod=False, env_path: Optional[str] = None):
+    if env_path:
+      dotenv.load_dotenv(env_path)
+    else:
+      dotenv.load_dotenv(os.path.join(os.path.expanduser("~"), ".env"))
 
     self.prod = prod
     if self.prod:
