@@ -136,7 +136,7 @@ class TestCanvasCourse:
     """Tests for CanvasCourse class."""
 
     @pytest.fixture
-    def mock_canvas_course(self):
+    def canvas_course(self):
         """Create a mock Canvas course."""
         from lms_interface.canvas_interface import CanvasCourse, CanvasInterface
 
@@ -150,57 +150,57 @@ class TestCanvasCourse:
             canvasapi_course=mock_canvasapi_course
         )
 
-    def test_create_assignment_group_new(self, mock_canvas_course):
+    def test_create_assignment_group_new(self, canvas_course):
         """Should create a new assignment group when none exists."""
-        mock_canvas_course.course.get_assignment_groups.return_value = []
+        canvas_course.course.get_assignment_groups.return_value = []
         mock_new_group = Mock()
         mock_new_group.name = "test_group"
         mock_new_group.id = 999
-        mock_canvas_course.course.create_assignment_group.return_value = mock_new_group
+        canvas_course.course.create_assignment_group.return_value = mock_new_group
 
-        result = mock_canvas_course.create_assignment_group(name="test_group")
+        result = canvas_course.create_assignment_group(name="test_group")
 
         assert result == mock_new_group
-        mock_canvas_course.course.create_assignment_group.assert_called_once()
+        canvas_course.course.create_assignment_group.assert_called_once()
 
-    def test_create_assignment_group_existing(self, mock_canvas_course):
+    def test_create_assignment_group_existing(self, canvas_course):
         """Should return existing assignment group when one exists."""
         existing_group = Mock()
         existing_group.name = "existing_group"
         existing_group.id = 888
-        mock_canvas_course.course.get_assignment_groups.return_value = [existing_group]
+        canvas_course.course.get_assignment_groups.return_value = [existing_group]
 
-        result = mock_canvas_course.create_assignment_group(name="existing_group")
+        result = canvas_course.create_assignment_group(name="existing_group")
 
         assert result == existing_group
-        mock_canvas_course.course.create_assignment_group.assert_not_called()
+        canvas_course.course.create_assignment_group.assert_not_called()
 
-    def test_create_assignment_group_delete_existing(self, mock_canvas_course):
+    def test_create_assignment_group_delete_existing(self, canvas_course):
         """Should delete and recreate when delete_existing=True."""
         existing_group = Mock()
         existing_group.name = "dev"
         existing_group.id = 888
-        mock_canvas_course.course.get_assignment_groups.return_value = [existing_group]
+        canvas_course.course.get_assignment_groups.return_value = [existing_group]
 
         new_group = Mock()
         new_group.name = "dev"
         new_group.id = 999
-        mock_canvas_course.course.create_assignment_group.return_value = new_group
+        canvas_course.course.create_assignment_group.return_value = new_group
 
-        result = mock_canvas_course.create_assignment_group(name="dev", delete_existing=True)
+        result = canvas_course.create_assignment_group(name="dev", delete_existing=True)
 
         existing_group.delete.assert_called_once()
         assert result == new_group
 
-    def test_add_quiz(self, mock_canvas_course):
+    def test_add_quiz(self, canvas_course):
         """Should create a quiz with correct parameters."""
         mock_group = Mock()
         mock_group.id = 123
 
         mock_quiz = Mock()
-        mock_canvas_course.course.create_quiz.return_value = mock_quiz
+        canvas_course.course.create_quiz.return_value = mock_quiz
 
-        result = mock_canvas_course.add_quiz(
+        result = canvas_course.add_quiz(
             mock_group,
             title="Test Quiz",
             is_practice=False,
@@ -210,29 +210,30 @@ class TestCanvasCourse:
         assert result == mock_quiz
 
         # Check that create_quiz was called with correct quiz_type
-        call_kwargs = mock_canvas_course.course.create_quiz.call_args
+        call_kwargs = canvas_course.course.create_quiz.call_args
         quiz_params = call_kwargs[1]["quiz"]
         assert quiz_params["title"] == "Test Quiz"
         assert quiz_params["quiz_type"] == "assignment"
         assert quiz_params["assignment_group_id"] == 123
 
-    def test_add_quiz_practice_mode(self, mock_canvas_course):
+    def test_add_quiz_practice_mode(self, canvas_course):
         """Practice quizzes should have quiz_type='practice_quiz'."""
         mock_group = Mock()
         mock_group.id = 123
 
         mock_quiz = Mock()
-        mock_canvas_course.course.create_quiz.return_value = mock_quiz
+        canvas_course.course.create_quiz.return_value = mock_quiz
 
-        mock_canvas_course.add_quiz(mock_group, title="Practice", is_practice=True)
+        canvas_course.add_quiz(mock_group, title="Practice", is_practice=True)
 
-        call_kwargs = mock_canvas_course.course.create_quiz.call_args
+        call_kwargs = canvas_course.course.create_quiz.call_args
         quiz_params = call_kwargs[1]["quiz"]
         assert quiz_params["quiz_type"] == "practice_quiz"
 
-    def test_get_students(self, mock_canvas_course):
+    def test_get_students(self, canvas_course):
         """Should return list of Student objects."""
         from lms_interface.classes import Student
+        from lms_interface.canvas_interface import CanvasCourse, CanvasInterface
 
         mock_user1 = Mock()
         mock_user1.name = "Alice"
@@ -242,9 +243,16 @@ class TestCanvasCourse:
         mock_user2.name = "Bob"
         mock_user2.id = 2
 
-        mock_canvas_course.course.get_users.return_value = [mock_user1, mock_user2]
+        mock_interface = Mock(spec=CanvasInterface)
+        mock_canvasapi_course = MagicMock()
+        mock_canvasapi_course.get_users.return_value = [mock_user1, mock_user2]
 
-        students = mock_canvas_course.get_students()
+        canvas_course = CanvasCourse(
+            canvas_interface=mock_interface,
+            canvasapi_course=mock_canvasapi_course
+        )
+
+        students = canvas_course.get_students()
 
         assert len(students) == 2
         assert all(isinstance(s, Student) for s in students)
@@ -256,7 +264,7 @@ class TestQuestionUpload:
     """Tests for question upload logic."""
 
     @pytest.fixture
-    def mock_canvas_course(self):
+    def mock_canvas_course_upload(self):
         """Create a mock Canvas course for question upload tests."""
         from lms_interface.canvas_interface import CanvasCourse, CanvasInterface
 
@@ -268,7 +276,7 @@ class TestQuestionUpload:
             canvasapi_course=mock_canvasapi_course
         )
 
-    def test_create_question_single_payload(self, mock_canvas_course):
+    def test_create_question_single_payload(self, mock_canvas_course_upload):
         """Single payload should be uploaded without creating a group."""
         mock_quiz = Mock()
         mock_quiz.create_question = Mock()
@@ -280,13 +288,13 @@ class TestQuestionUpload:
             "points_possible": 5
         }
 
-        result = mock_canvas_course.create_question(mock_quiz, payload)
+        result = mock_canvas_course_upload.create_question(mock_quiz, payload, max_workers=1)
 
         # Single payload should not create a group
         assert result is None
         mock_quiz.create_question.assert_called_once()
 
-    def test_create_question_multiple_payloads_creates_group(self, mock_canvas_course):
+    def test_create_question_multiple_payloads_creates_group(self, mock_canvas_course_upload):
         """Multiple payloads should create a question group."""
         mock_quiz = Mock()
         mock_quiz.create_question = Mock()
@@ -300,10 +308,11 @@ class TestQuestionUpload:
             {"question_name": "Q2", "question_text": "Question 2", "points_possible": 5},
         ]
 
-        result = mock_canvas_course.create_question(
+        result = mock_canvas_course_upload.create_question(
             mock_quiz,
             payloads,
-            question_points=5
+            question_points=5,
+            max_workers=1
         )
 
         assert result == mock_group
@@ -311,15 +320,15 @@ class TestQuestionUpload:
         # Both questions should be uploaded
         assert mock_quiz.create_question.call_count == 2
 
-    def test_create_question_empty_payloads_returns_none(self, mock_canvas_course):
+    def test_create_question_empty_payloads_returns_none(self, mock_canvas_course_upload):
         """Empty payload list should return None."""
         mock_quiz = Mock()
 
-        result = mock_canvas_course.create_question(mock_quiz, [])
+        result = mock_canvas_course_upload.create_question(mock_quiz, [], max_workers=1)
 
         assert result is None
 
-    def test_create_question_group_requires_points(self, mock_canvas_course):
+    def test_create_question_group_requires_points(self, mock_canvas_course_upload):
         """Grouping without points should raise a ValueError."""
         mock_quiz = Mock()
         payloads = [
@@ -328,9 +337,9 @@ class TestQuestionUpload:
         ]
 
         with pytest.raises(ValueError, match="question_points is required"):
-            mock_canvas_course.create_question(mock_quiz, payloads)
+            mock_canvas_course_upload.create_question(mock_quiz, payloads, max_workers=1)
 
-    def test_non_retryable_upload_does_not_retry(self, mock_canvas_course):
+    def test_non_retryable_upload_does_not_retry(self, mock_canvas_course_upload):
         """4xx errors should not be retried."""
         import canvasapi.exceptions
 
@@ -346,7 +355,12 @@ class TestQuestionUpload:
 
         payloads = [{"question_name": "Q1", "question_text": "Question 1", "points_possible": 1}]
 
-        mock_canvas_course._upload_question_payloads(mock_quiz, payloads, max_upload_retries=3)
+        mock_canvas_course_upload._upload_question_payloads(
+            mock_quiz,
+            payloads,
+            max_upload_retries=3,
+            max_workers=1
+        )
 
         assert mock_quiz.create_question.call_count == 1
 
