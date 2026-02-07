@@ -1,10 +1,10 @@
 #!env python
 from __future__ import annotations
 
-import queue
+import itertools
 import tempfile
 import time
-import typing
+from collections import deque
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -14,17 +14,9 @@ import canvasapi.quiz
 import canvasapi.assignment
 import canvasapi.submission
 import canvasapi.exceptions
-import dotenv, os
-import requests
-from canvasapi.util import combine_kwargs
-
-try:
-  from urllib3.util.retry import Retry  # urllib3 v2
-except Exception:
-  from urllib3.util import Retry        # urllib3 v1 fallback
-
 import os
 import dotenv
+import requests
 
 from .classes import LMSWrapper, Student, Submission, Submission__Canvas, FileSubmission__Canvas, TextSubmission__Canvas, QuizSubmission
 
@@ -32,8 +24,6 @@ import logging
 
 log = logging.getLogger(__name__)
 
-QUESTION_VARIATIONS_TO_TRY = 1000
-NUM_WORKERS = 4
 MAX_UPLOAD_RETRIES = 50
 RETRY_BACKOFF_BASE = 1.0
 RETRY_BACKOFF_MAX = 10.0
@@ -140,118 +130,145 @@ class CanvasCourse(LMSWrapper):
     })
     return q
 
-  def push_quiz_to_canvas(
+  def create_question(
       self,
-      quiz: Quiz,
-      num_variations: int,
-      title: typing.Optional[str] = None,
-      is_practice = False,
-      assignment_group: typing.Optional[canvasapi.course.AssignmentGroup] = None,
+      canvas_quiz: canvasapi.quiz.Quiz,
+      question_payloads,
+      *,
+      group_name: Optional[str] = None,
+      question_points: Optional[float] = None,
+      pick_count: int = 1,
       max_upload_retries: int = MAX_UPLOAD_RETRIES,
       retry_backoff_base: float = RETRY_BACKOFF_BASE,
       retry_backoff_max: float = RETRY_BACKOFF_MAX
-  ):
-    if assignment_group is None:
-      assignment_group = self.create_assignment_group()
-    canvas_quiz = self.add_quiz(assignment_group, title, is_practice=is_practice, description=quiz.description)
-    
-    total_questions = len(quiz.questions)
-    total_variations_created = 0
-    log.info(f"Starting to push quiz '{title or canvas_quiz.title}' with {total_questions} questions to Canvas")
-    log.info(f"Target: {num_variations} variations per question")
-    
-    all_variations = set() # Track all variations so we can ensure we aren't uploading duplicates
-    questions_to_upload = queue.Queue() # Make a queue of questions to upload so we can do so in the background
-    retry_counts: dict[str, int] = {}
-    
-    # Generate all quiz questions
-    for question_i, question in enumerate(quiz):
-      log.info(f"Processing question {question_i + 1}/{total_questions}: '{question.name}'")
-  
-      group : canvasapi.quiz.QuizGroup = canvas_quiz.create_question_group([
+  ) -> Optional[canvasapi.quiz.QuizGroup]:
+    """
+    Upload one question or a group of questions to Canvas.
+
+    Args:
+      canvas_quiz: Canvas quiz object to receive questions.
+      question_payloads: A single payload dict or an iterable of payload dicts.
+      group_name: If provided (or if multiple payloads), create a question group.
+      question_points: Points per question in the group (required for grouping).
+      pick_count: Number of questions to pick from the group.
+
+    Note:
+      If question_payloads is an iterator, uploads are streamed without buffering.
+    """
+    if isinstance(question_payloads, dict):
+      payload_iter = iter([question_payloads])
+      use_group = False
+    elif isinstance(question_payloads, (list, tuple)):
+      payload_iter = iter(question_payloads)
+      use_group = True
+    else:
+      payload_iter = iter(question_payloads)
+      use_group = True
+
+    if group_name is not None or question_points is not None:
+      use_group = True
+
+    try:
+      first_payload = next(payload_iter)
+    except StopIteration:
+      log.warning("No question payloads provided; skipping upload.")
+      return None
+
+    payloads_iter = itertools.chain([first_payload], payload_iter)
+
+    group = None
+    if use_group:
+      if question_points is None:
+        question_points = first_payload.get("points_possible")
+      if question_points is None:
+        raise ValueError("question_points is required when creating a question group.")
+      if group_name is None:
+        group_name = first_payload.get("question_name", "Question Group")
+
+      group = canvas_quiz.create_question_group([
         {
-          "name": f"{question.name}",
-          "pick_count": 1,
-          "question_points": question.points_value
+          "name": group_name,
+          "pick_count": pick_count,
+          "question_points": question_points
         }
       ])
-      
-      # Track all variations across every question, in case we have duplicate questions
-      variation_count = 0
-      for attempt_number in range(QUESTION_VARIATIONS_TO_TRY):
+      def attach_group_id():
+        for payload in payloads_iter:
+          payload["quiz_group_id"] = group.id
+          yield payload
 
-        # Get the question in a format that is ready for canvas (e.g. json)
-        # Use large gaps between base seeds to avoid overlap with backoff attempts
-        # Each variation gets seeds: base_seed, base_seed+1, base_seed+2, ... for backoffs
-        base_seed = attempt_number * 1000
-        question_for_canvas = question.get__canvas(self.course, canvas_quiz, rng_seed=base_seed)
+      self._upload_question_payloads(
+        canvas_quiz,
+        attach_group_id(),
+        max_upload_retries=max_upload_retries,
+        retry_backoff_base=retry_backoff_base,
+        retry_backoff_max=retry_backoff_max
+      )
+      return group
 
-        question_fingerprint = question_for_canvas["question_text"]
-        try:
-          question_fingerprint += ''.join([
-            '|'.join([
-              f"{k}:{a[k]}" for k in sorted(a.keys())
-            ])
-            for a in question_for_canvas["answers"]
-          ])
-        except TypeError as e:
-          log.error(e)
-          log.warning("Continuing anyway")
+    self._upload_question_payloads(
+      canvas_quiz,
+      payloads_iter,
+      max_upload_retries=max_upload_retries,
+      retry_backoff_base=retry_backoff_base,
+      retry_backoff_max=retry_backoff_max
+    )
 
-        # if it is in the variations that we have already seen then skip ahead, else track
-        if question_fingerprint in all_variations:
-          continue
-        all_variations.add(question_fingerprint)
-        
-        # Push question to canvas
-        log.info(f"Creating #{question_i} ({question.name}) {variation_count + 1} / {num_variations} for canvas.")
-        
-        # Set group ID to add it to the question group
-        question_for_canvas["quiz_group_id"] = group.id
+    return group
 
-        questions_to_upload.put({
-          "question": question_for_canvas,
-          "fingerprint": question_fingerprint
-        })
-        total_variations_created += 1
-      
-        # Update and check variations already seen
-        variation_count += 1
-        if variation_count >= num_variations:
-          break
-        if variation_count >= question.possible_variations:
-          break
-      
-      log.info(f"Completed question '{question.name}': {variation_count} variations created")
+  def _upload_question_payloads(
+      self,
+      canvas_quiz: canvasapi.quiz.Quiz,
+      payloads,
+      *,
+      max_upload_retries: int = MAX_UPLOAD_RETRIES,
+      retry_backoff_base: float = RETRY_BACKOFF_BASE,
+      retry_backoff_max: float = RETRY_BACKOFF_MAX
+  ) -> None:
+    payload_iter = iter(payloads)
+    queue = deque()
+    retry_counts: dict[int, int] = {}
+    total = 0
+    index = 0
 
-    # Upload questions
-    num_questions_to_upload = questions_to_upload.qsize()
-    while not questions_to_upload.empty():
-      queued_item = questions_to_upload.get()
-      q_to_upload = queued_item["question"]
-      fingerprint = queued_item["fingerprint"]
-      log.info(f"Uploading {num_questions_to_upload-questions_to_upload.qsize()} / {num_questions_to_upload} to canvas!")
+    def enqueue_next() -> bool:
+      nonlocal index, total
       try:
-        canvas_quiz.create_question(question=q_to_upload)
+        payload = next(payload_iter)
+      except StopIteration:
+        return False
+      queue.append((index, payload))
+      index += 1
+      total = max(total, index)
+      return True
+
+    # Prime the queue with the first payload (if any).
+    enqueue_next()
+
+    while queue:
+      index, payload = queue.popleft()
+      label = payload.get("question_name", f"question_{index}")
+      log.info(f"Uploading {index + 1} / {max(total, index + 1)} to canvas!")
+      try:
+        canvas_quiz.create_question(question=payload)
+        enqueue_next()
       except canvasapi.exceptions.CanvasException as e:
         log.warning("Encountered Canvas error.")
         log.warning(e)
         if not _is_retryable_canvas_exception(e):
-          log.error(f"Non-retryable Canvas error; dropping question: {fingerprint}")
+          log.error(f"Non-retryable Canvas error; dropping question: {label}")
+          enqueue_next()
           continue
-        retry_count = retry_counts.get(fingerprint, 0) + 1
+        retry_count = retry_counts.get(index, 0) + 1
         if retry_count > max_upload_retries:
-          log.error(f"Exceeded max retries ({max_upload_retries}); dropping question: {fingerprint}")
+          log.error(f"Exceeded max retries ({max_upload_retries}); dropping question: {label}")
+          enqueue_next()
           continue
-        retry_counts[fingerprint] = retry_count
+        retry_counts[index] = retry_count
         sleep_s = min(retry_backoff_base * (2 ** (retry_count - 1)), retry_backoff_max)
         log.warning(f"Retrying in {sleep_s:.1f}s (attempt {retry_count}/{max_upload_retries})")
         time.sleep(sleep_s)
-        questions_to_upload.put(queued_item)
-        continue
-    
-    log.info(f"Quiz upload completed! Total variations created: {total_variations_created}")
-    log.info(f"Canvas quiz URL: {canvas_quiz.html_url}")
+        queue.append((index, payload))
   
   def get_assignment(self, assignment_id : int) -> Optional[CanvasAssignment]:
     try:
