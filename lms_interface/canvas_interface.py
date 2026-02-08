@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import itertools
+import logging
+import os
 import queue
 import tempfile
 import threading
@@ -9,18 +11,23 @@ import time
 from datetime import datetime, timezone
 
 import canvasapi
-import canvasapi.course
-import canvasapi.quiz
 import canvasapi.assignment
-import canvasapi.submission
+import canvasapi.course
 import canvasapi.exceptions
-import os
+import canvasapi.quiz
+import canvasapi.submission
 import dotenv
 import requests
 
-from .classes import LMSWrapper, Student, Submission, Submission__Canvas, FileSubmission__Canvas, TextSubmission__Canvas, QuizSubmission
-
-import logging
+from .classes import (
+  FileSubmission__Canvas,
+  LMSWrapper,
+  QuizSubmission,
+  Student,
+  Submission,
+  Submission__Canvas,
+  TextSubmission__Canvas,
+)
 
 log = logging.getLogger(__name__)
 

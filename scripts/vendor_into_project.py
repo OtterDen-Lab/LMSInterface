@@ -14,9 +14,8 @@ import argparse
 import re
 import shutil
 import sys
-from pathlib import Path
 from datetime import datetime
-
+from pathlib import Path
 
 # Files to copy from lms_interface
 FILES_TO_COPY = ['__init__.py', 'canvas_interface.py', 'classes.py']

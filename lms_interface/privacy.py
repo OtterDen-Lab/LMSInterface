@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 
 from .classes import Submission
-from .interfaces import LMSBackend, LMSCourse, LMSAssignment, LMSUser
+from .interfaces import LMSAssignment, LMSBackend, LMSCourse, LMSUser
 
 
 def _hash_id(value: str, salt: str) -> str:

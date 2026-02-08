@@ -26,6 +26,7 @@ dev = [
     "black",
     "flake8",
     "mypy",
+    "ruff",
 ]
 
 [tool.black]
@@ -40,3 +41,10 @@ warn_unused_configs = true
 [tool.pytest.ini_options]
 testpaths = ["lms_interface/tests"]
 addopts = "-q"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["I"]

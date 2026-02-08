@@ -7,7 +7,7 @@ They verify the logic of the canvas_interface module without network calls.
 
 import os
 import tempfile
-from unittest.mock import Mock, MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, Mock, PropertyMock, patch
 
 import pytest
 
@@ -232,8 +232,8 @@ class TestCanvasCourse:
 
     def test_get_students(self, canvas_course):
         """Should return list of Student objects."""
-        from lms_interface.classes import Student
         from lms_interface.canvas_interface import CanvasCourse, CanvasInterface
+        from lms_interface.classes import Student
 
         mock_user1 = Mock()
         mock_user1.name = "Alice"
@@ -486,7 +486,12 @@ class TestPushFeedbackErrors:
     def test_canvas_exception_on_get_submission_is_handled(self):
         """Canvas exceptions should be handled and not crash."""
         import canvasapi.exceptions
-        from lms_interface.canvas_interface import CanvasAssignment, CanvasCourse, CanvasInterface
+
+        from lms_interface.canvas_interface import (
+            CanvasAssignment,
+            CanvasCourse,
+            CanvasInterface,
+        )
 
         mock_interface = Mock(spec=CanvasInterface)
         mock_course = Mock()

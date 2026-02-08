@@ -1,12 +1,18 @@
 #!env python
 
-from lms_interface.canvas_interface import CanvasInterface, CanvasCourse, CanvasAssignment
-import canvasapi
+import argparse
+import logging
 from datetime import datetime, timezone
 from typing import List
-import argparse
 
-import logging
+import canvasapi
+
+from lms_interface.canvas_interface import (
+  CanvasAssignment,
+  CanvasCourse,
+  CanvasInterface,
+)
+
 # Configure logging to actually output
 logging.basicConfig()
 log = logging.getLogger(__name__)

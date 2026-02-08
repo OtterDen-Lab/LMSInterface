@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .canvas_interface import CanvasInterface, CanvasCourse, CanvasAssignment
-from .interfaces import LMSBackend, LMSCourse, LMSAssignment
+from .canvas_interface import CanvasAssignment, CanvasCourse, CanvasInterface
+from .interfaces import LMSAssignment, LMSBackend, LMSCourse
 
 
 class CanvasBackend(LMSBackend):
