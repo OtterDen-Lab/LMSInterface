@@ -50,6 +50,7 @@ Recommended entry points:
 
 - `CanvasBackend` for the current Canvas API
 - `PrivacyBackend` to enforce FERPA-friendly anonymization
+- `CanvasInterface(privacy_mode="id_only")` for quick ID-only redaction
 
 Example:
 

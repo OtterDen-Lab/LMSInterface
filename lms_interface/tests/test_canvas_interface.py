@@ -140,7 +140,8 @@ class TestCanvasCourse:
         """Create a mock Canvas course."""
         from lms_interface.canvas_interface import CanvasCourse, CanvasInterface
 
-        mock_interface = Mock(spec=CanvasInterface)
+        mock_interface = Mock()
+        mock_interface.privacy_mode = None
         mock_canvasapi_course = MagicMock()
         mock_canvasapi_course.name = "Test Course"
         mock_canvasapi_course.id = 12345
@@ -243,7 +244,8 @@ class TestCanvasCourse:
         mock_user2.name = "Bob"
         mock_user2.id = 2
 
-        mock_interface = Mock(spec=CanvasInterface)
+        mock_interface = Mock()
+        mock_interface.privacy_mode = None
         mock_canvasapi_course = MagicMock()
         mock_canvasapi_course.get_users.return_value = [mock_user1, mock_user2]
 
@@ -258,6 +260,28 @@ class TestCanvasCourse:
         assert all(isinstance(s, Student) for s in students)
         assert students[0].name == "Alice"
         assert students[1].name == "Bob"
+
+    def test_get_students_id_only_privacy(self, canvas_course):
+        """Should redact names when privacy_mode='id_only'."""
+        from lms_interface.canvas_interface import CanvasCourse, CanvasInterface
+
+        mock_user = Mock()
+        mock_user.name = "Alice"
+        mock_user.id = 42
+
+        mock_interface = Mock(spec=CanvasInterface)
+        mock_interface.privacy_mode = "id_only"
+        mock_canvasapi_course = MagicMock()
+        mock_canvasapi_course.get_users.return_value = [mock_user]
+
+        canvas_course = CanvasCourse(
+            canvas_interface=mock_interface,
+            canvasapi_course=mock_canvasapi_course
+        )
+
+        students = canvas_course.get_students()
+
+        assert students[0].name == "Student 42"
 
 
 class TestQuestionUpload:
