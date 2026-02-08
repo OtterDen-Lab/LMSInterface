@@ -21,20 +21,24 @@ class PseudonymousStudent(LMSUser):
 
 
 class PrivacyBackend(LMSBackend):
-  def __init__(self, backend: LMSBackend, *, salt: str | None = None):
+  def __init__(self, backend: LMSBackend, *, salt: str | None = None, mode: str = "pseudonymous"):
     self._backend = backend
+    self._mode = mode
     self._salt = salt or os.environ.get("LMS_PRIVACY_SALT")
-    if not self._salt:
-      raise ValueError("LMS_PRIVACY_SALT is required for privacy mode.")
+    if self._mode not in {"pseudonymous", "id_only"}:
+      raise ValueError("Privacy mode must be 'pseudonymous' or 'id_only'.")
+    if self._mode == "pseudonymous" and not self._salt:
+      raise ValueError("LMS_PRIVACY_SALT is required for pseudonymous privacy mode.")
 
   def get_course(self, course_id: int) -> LMSCourse:
-    return PrivacyCourseAdapter(self._backend.get_course(course_id), salt=self._salt)
+    return PrivacyCourseAdapter(self._backend.get_course(course_id), salt=self._salt, mode=self._mode)
 
 
 @dataclass
 class PrivacyCourseAdapter(LMSCourse):
   _course: LMSCourse
   salt: str
+  mode: str
 
   @property
   def id(self):
@@ -46,6 +50,12 @@ class PrivacyCourseAdapter(LMSCourse):
 
   def _student_alias(self, student: LMSUser) -> PseudonymousStudent:
     raw_id = str(student.user_id)
+    if self.mode == "id_only":
+      return PseudonymousStudent(
+        name=f"Student {raw_id}",
+        user_id=raw_id,
+        real_user_id=student.user_id
+      )
     hashed = _hash_id(f"{self.id}:{raw_id}", self.salt)
     short = hashed[:8]
     return PseudonymousStudent(
@@ -58,11 +68,11 @@ class PrivacyCourseAdapter(LMSCourse):
     assignment = self._course.get_assignment(assignment_id)
     if assignment is None:
       return None
-    return PrivacyAssignmentAdapter(assignment, salt=self.salt, course_id=str(self.id))
+    return PrivacyAssignmentAdapter(assignment, salt=self.salt, course_id=str(self.id), mode=self.mode)
 
   def get_assignments(self, **kwargs) -> list[LMSAssignment]:
     return [
-      PrivacyAssignmentAdapter(a, salt=self.salt, course_id=str(self.id))
+      PrivacyAssignmentAdapter(a, salt=self.salt, course_id=str(self.id), mode=self.mode)
       for a in self._course.get_assignments(**kwargs)
     ]
 
@@ -75,6 +85,7 @@ class PrivacyAssignmentAdapter(LMSAssignment):
   _assignment: LMSAssignment
   salt: str
   course_id: str
+  mode: str
 
   @property
   def id(self):
@@ -86,6 +97,12 @@ class PrivacyAssignmentAdapter(LMSAssignment):
 
   def _student_alias(self, student: LMSUser) -> PseudonymousStudent:
     raw_id = str(student.user_id)
+    if self.mode == "id_only":
+      return PseudonymousStudent(
+        name=f"Student {raw_id}",
+        user_id=raw_id,
+        real_user_id=student.user_id
+      )
     hashed = _hash_id(f"{self.course_id}:{raw_id}", self.salt)
     short = hashed[:8]
     return PseudonymousStudent(

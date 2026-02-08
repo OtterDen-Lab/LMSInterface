@@ -58,11 +58,16 @@ from lms_interface.backends import CanvasBackend
 from lms_interface.privacy import PrivacyBackend
 
 backend = CanvasBackend(prod=False)
-backend = PrivacyBackend(backend, salt="my-course-salt")
+backend = PrivacyBackend(backend, salt="my-course-salt", mode="pseudonymous")
 
 course = backend.get_course(12345)
 students = course.get_students()
 ```
+
+Privacy modes:
+
+- `pseudonymous`: hashed IDs (requires `LMS_PRIVACY_SALT`)
+- `id_only`: uses the real Canvas ID but redacts names (`Student <id>`)
 
 ## Vendoring
 

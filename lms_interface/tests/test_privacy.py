@@ -50,3 +50,17 @@ def test_privacy_backend_hashes_student_ids():
   assert isinstance(students[0], PseudonymousStudent)
   assert students[0].user_id != "123"
   assert students[0].real_user_id == 123
+
+
+def test_privacy_backend_id_only_mode_uses_real_id():
+  student = Mock()
+  student.name = "Alice"
+  student.user_id = 123
+  course = FakeCourse(42, [student])
+  backend = PrivacyBackend(FakeBackend(course), salt="secret", mode="id_only")
+
+  students = backend.get_course(42).get_students()
+
+  assert len(students) == 1
+  assert students[0].user_id == "123"
+  assert students[0].name == "Student 123"
