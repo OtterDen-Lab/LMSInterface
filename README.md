@@ -41,6 +41,29 @@ window before continuing.
 You can override these via `CanvasCourse.create_question(...)` or by calling
 the lower-level `_upload_question_payloads(...)`.
 
+## Backend Abstraction (LTI-Ready)
+
+New tools should depend on the LMS-agnostic interfaces and adapters instead
+of Canvas directly. This makes it easier to add an LTI backend later.
+
+Recommended entry points:
+
+- `CanvasBackend` for the current Canvas API
+- `PrivacyBackend` to enforce FERPA-friendly anonymization
+
+Example:
+
+```python
+from lms_interface.backends import CanvasBackend
+from lms_interface.privacy import PrivacyBackend
+
+backend = CanvasBackend(prod=False)
+backend = PrivacyBackend(backend, salt="my-course-salt")
+
+course = backend.get_course(12345)
+students = course.get_students()
+```
+
 ## Vendoring
 
 Use the shared script to vendor into another project:
