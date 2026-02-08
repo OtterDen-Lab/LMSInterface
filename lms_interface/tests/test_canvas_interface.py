@@ -254,7 +254,7 @@ class TestCanvasCourse:
             canvasapi_course=mock_canvasapi_course
         )
 
-        students = canvas_course.get_students()
+        students = canvas_course.get_students(include_names=True)
 
         assert len(students) == 2
         assert all(isinstance(s, Student) for s in students)
@@ -282,6 +282,28 @@ class TestCanvasCourse:
         students = canvas_course.get_students()
 
         assert students[0].name == "Student 42"
+
+    def test_get_students_defaults_to_id_only(self, canvas_course):
+        """Default should return redacted names."""
+        from lms_interface.canvas_interface import CanvasCourse, CanvasInterface
+
+        mock_user = Mock()
+        mock_user.name = "Alice"
+        mock_user.id = 7
+
+        mock_interface = Mock()
+        mock_interface.privacy_mode = None
+        mock_canvasapi_course = MagicMock()
+        mock_canvasapi_course.get_users.return_value = [mock_user]
+
+        canvas_course = CanvasCourse(
+            canvas_interface=mock_interface,
+            canvasapi_course=mock_canvasapi_course
+        )
+
+        students = canvas_course.get_students()
+
+        assert students[0].name == "Student 7"
 
 
 class TestQuestionUpload:

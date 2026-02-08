@@ -52,6 +52,13 @@ Recommended entry points:
 - `PrivacyBackend` to enforce FERPA-friendly anonymization
 - `CanvasInterface(privacy_mode="id_only")` for quick ID-only redaction
 
+By default, student names are redacted. To request real names, pass
+`include_names=True` to:
+
+- `CanvasCourse.get_students(...)`
+- `CanvasAssignment.get_submissions(...)`
+- `CanvasQuiz.get_quiz_submissions(...)`
+
 Example:
 
 ```python
