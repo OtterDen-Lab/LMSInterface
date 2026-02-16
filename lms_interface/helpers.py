@@ -247,6 +247,7 @@ def cleanup_missing_by_due_date(
     "unchanged_missing": 0,
     "unchanged_none": 0,
     "unchanged_other": 0,
+    "skipped_excused": 0,
     "skipped_submitted": 0,
     "skipped_no_due_date": 0,
     "errors": 0,
@@ -265,6 +266,7 @@ def cleanup_missing_by_due_date(
     assignment_updates_to_missing = 0
     assignment_updates_to_none = 0
     assignment_unchanged = 0
+    assignment_skipped_excused = 0
     assignment_skipped_submitted = 0
     assignment_skipped_no_due_date = 0
     assignment_errors = 0
@@ -290,6 +292,11 @@ def cleanup_missing_by_due_date(
         continue
 
       stats["submissions_checked"] += 1
+
+      if bool(getattr(submission, "excused", False)):
+        stats["skipped_excused"] += 1
+        assignment_skipped_excused += 1
+        continue
 
       content_signals = _submission_content_signals(submission)
       if content_signals:
@@ -417,6 +424,7 @@ def cleanup_missing_by_due_date(
       f"updated_to_missing={assignment_updates_to_missing}, "
       f"updated_to_none={assignment_updates_to_none}, "
       f"unchanged={assignment_unchanged}, "
+      f"skipped_excused={assignment_skipped_excused}, "
       f"skipped_submitted={assignment_skipped_submitted}, "
       f"skipped_no_due_date={assignment_skipped_no_due_date}, "
       f"errors={assignment_errors}"

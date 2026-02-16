@@ -25,6 +25,42 @@ pytest
 
 Tests live in `lms_interface/tests/` so they vendor cleanly.
 
+## Cleanup Missing Helper
+
+Use `cleanup-missing` to normalize Canvas late-policy status for unsubmitted work:
+
+- Past due: set to `missing`
+- Future due: set to `none`
+
+The helper can also clear stale placeholder grades (`Incomplete`/`0`) on future-due,
+contentless placeholder submissions.
+
+Run via module:
+
+```bash
+python -m lms_interface.helpers cleanup-missing --course-id <COURSE_ID> --dry-run
+```
+
+Or via script entry point:
+
+```bash
+lms-interface-helper cleanup-missing --course-id <COURSE_ID> --dry-run
+```
+
+Useful flags:
+
+- `--assignment-id <ID>`: scope to one assignment
+- `--clear-placeholder-grade`: clear stale placeholder grades
+- `--include-unpublished`: include unpublished assignments
+- `--debug`: verbose per-student logs
+
+Recommended rollout:
+
+1. Run `--dry-run` on one assignment.
+2. Run live on one assignment and verify in Canvas UI.
+3. Run course-wide with `--dry-run`.
+4. Run course-wide live.
+
 ## Parallel Uploads
 
 Question uploads support multi-threading to speed up large quizzes. The default

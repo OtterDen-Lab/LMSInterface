@@ -29,6 +29,7 @@ class FakeSubmission:
       url: str | None = None,
       media_comment_id=None,
       missing: bool = False,
+      excused: bool = False,
   ):
     self.workflow_state = workflow_state
     self.submitted_at = submitted_at
@@ -41,6 +42,7 @@ class FakeSubmission:
     self.url = url
     self.media_comment_id = media_comment_id
     self.missing = missing
+    self.excused = excused
     self.edit_calls = []
 
   def edit(self, *, submission):
@@ -262,3 +264,25 @@ def test_cleanup_missing_can_clear_placeholder_grade_in_dry_run():
   assert stats["placeholder_grade_needs_clear"] == 1
   assert stats["placeholder_grade_clear_attempted"] == 1
   assert stats["placeholder_grade_clear_succeeded"] == 1
+
+
+def test_cleanup_missing_skips_excused_submissions():
+  submission = FakeSubmission(
+    excused=True,
+    late_policy_status="missing",
+  )
+  assignment = FakeAssignment(
+    assignment_id=8,
+    due_at="2026-02-01T00:00:00+00:00",
+    submissions_by_user={108: submission},
+  )
+  course = FakeCourse([assignment], [FakeStudent(108)])
+
+  stats = cleanup_missing_by_due_date(
+    course,
+    clear_placeholder_grade=True,
+    now=datetime(2026, 2, 16, tzinfo=timezone.utc),
+  )
+
+  assert submission.edit_calls == []
+  assert stats["skipped_excused"] == 1
