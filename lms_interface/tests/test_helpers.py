@@ -286,3 +286,30 @@ def test_cleanup_missing_skips_excused_submissions():
 
   assert submission.edit_calls == []
   assert stats["skipped_excused"] == 1
+
+
+def test_cleanup_missing_limit_processes_only_first_n_students():
+  submissions = {
+    201: FakeSubmission(late_policy_status="none"),
+    202: FakeSubmission(late_policy_status="none"),
+    203: FakeSubmission(late_policy_status="none"),
+  }
+  assignment = FakeAssignment(
+    assignment_id=9,
+    due_at="2026-02-01T00:00:00+00:00",
+    submissions_by_user=submissions,
+  )
+  course = FakeCourse([assignment], [FakeStudent(201), FakeStudent(202), FakeStudent(203)])
+
+  stats = cleanup_missing_by_due_date(
+    course,
+    limit=2,
+    now=datetime(2026, 2, 16, tzinfo=timezone.utc),
+  )
+
+  assert submissions[201].edit_calls == [{"late_policy_status": "missing"}]
+  assert submissions[202].edit_calls == [{"late_policy_status": "missing"}]
+  assert submissions[203].edit_calls == []
+  assert stats["students_available"] == 3
+  assert stats["student_limit"] == 2
+  assert stats["students_considered"] == 2

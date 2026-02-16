@@ -204,6 +204,7 @@ def cleanup_missing_by_due_date(
     dry_run: bool = False,
     include_unpublished: bool = False,
     assignment_id: int | None = None,
+    limit: int | None = None,
     force_clear_stale_missing: bool = True,
     clear_placeholder_grade: bool = False,
     now: datetime | None = None
@@ -224,6 +225,8 @@ def cleanup_missing_by_due_date(
 
   stats = {
     "assignments_considered": 0,
+    "students_available": 0,
+    "student_limit": limit if limit is not None else 0,
     "students_considered": 0,
     "submissions_checked": 0,
     "unsubmitted_considered": 0,
@@ -254,6 +257,9 @@ def cleanup_missing_by_due_date(
   }
 
   students = list(canvas_course.get_students(include_names=False))
+  stats["students_available"] = len(students)
+  if limit is not None:
+    students = students[:limit]
   assignments = list(canvas_course.get_assignments(include=["all_dates"], order_by="name"))
 
   total_assignments = len(assignments)
@@ -497,6 +503,11 @@ def main():
     type=int,
     help="Canvas assignment ID (required for deprecate/unsubmitted, optional for cleanup-missing)"
   )
+  parser.add_argument(
+    "--limit",
+    type=int,
+    help="Limit processing to first N students (optional, cleanup-missing only)"
+  )
 
   parser.add_argument(
     "--prod",
@@ -539,6 +550,8 @@ def main():
   # Validate assignment_id requirement
   if requires_assignment and not args.assignment_id:
     parser.error(f"--assignment-id is required for '{args.helper}'")
+  if args.limit is not None and args.limit < 1:
+    parser.error("--limit must be >= 1")
 
   # Initialize Canvas interface and course
   canvas_interface = CanvasInterface(prod=args.prod)
@@ -570,6 +583,7 @@ def main():
       dry_run=args.dry_run,
       include_unpublished=args.include_unpublished,
       assignment_id=args.assignment_id,
+      limit=args.limit,
       force_clear_stale_missing=not args.no_force_clear_stale_missing,
       clear_placeholder_grade=args.clear_placeholder_grade
     )
