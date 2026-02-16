@@ -7,7 +7,7 @@ packages = ["lms_interface"]
 
 [project]
 name = "lms-interface"
-version = "0.3.0"
+version = "0.4.0"
 description = "LMS interface library for teaching tools"
 authors = [
     {name = "Sam Ogden", email = "samuel.s.ogden@gmail.com"},
