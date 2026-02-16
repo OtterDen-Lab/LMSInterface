@@ -23,7 +23,7 @@ class LMSAssignment(Protocol):
       attachments=None,
       keep_previous_best: bool = True,
       clobber_feedback: bool = False
-  ) -> None: ...
+  ) -> bool | None: ...
 
 
 class LMSCourse(Protocol):
