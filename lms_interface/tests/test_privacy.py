@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from lms_interface.privacy import PrivacyBackend, PseudonymousStudent
+from lms_interface.privacy import PrivacyBackend, PrivacyContext, PseudonymousStudent
 
 
 class FakeCourse:
@@ -64,3 +64,39 @@ def test_privacy_backend_id_only_mode_uses_real_id():
   assert len(students) == 1
   assert students[0].user_id == "123"
   assert students[0].name == "Student 123"
+
+
+def test_privacy_context_none_mode_returns_raw_name():
+  context = PrivacyContext(privacy_mode="none")
+  assert context.resolve_student_name(42, raw_name="Alice") == "Alice"
+
+
+def test_privacy_context_id_only_mode_masks_name():
+  context = PrivacyContext(privacy_mode="id_only")
+  assert context.resolve_student_name(42, raw_name="Alice") == "Student 42"
+
+
+def test_privacy_context_blind_mode_is_stable_and_persistent(tmp_path):
+  map_path = tmp_path / "blind_map.json"
+  context = PrivacyContext(privacy_mode="blind", blind_id_map_path=str(map_path))
+
+  first = context.resolve_student_name(101)
+  second = context.resolve_student_name(101)
+  other = context.resolve_student_name(202)
+
+  assert first == second
+  assert first.startswith("Anon ")
+  assert other.startswith("Anon ")
+  assert first != other
+
+  reloaded = PrivacyContext(privacy_mode="blind", blind_id_map_path=str(map_path))
+  assert reloaded.resolve_student_name(101) == first
+
+
+def test_privacy_context_reveal_identity_suffix():
+  context = PrivacyContext(privacy_mode="blind", reveal_identity=True)
+  student = Mock()
+  student.user_id = 7
+  student.name = "Alice"
+  label = context.get_label(student)
+  assert "canvas_user_id=7" in label

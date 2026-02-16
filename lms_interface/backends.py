@@ -13,13 +13,19 @@ class CanvasBackend(LMSBackend):
       prod: bool = False,
       env_path: str | None = None,
       canvas_url: str | None = None,
-      canvas_key: str | None = None
+      canvas_key: str | None = None,
+      privacy_mode: str | None = None,
+      reveal_identity: bool = False,
+      blind_id_map_path: str | None = None
   ):
     self._interface = CanvasInterface(
       prod=prod,
       env_path=env_path,
       canvas_url=canvas_url,
-      canvas_key=canvas_key
+      canvas_key=canvas_key,
+      privacy_mode=privacy_mode,
+      reveal_identity=reveal_identity,
+      blind_id_map_path=blind_id_map_path
     )
 
   def get_course(self, course_id: int) -> LMSCourse:
@@ -74,8 +80,8 @@ class CanvasAssignmentAdapter(LMSAssignment):
       attachments=None,
       keep_previous_best: bool = True,
       clobber_feedback: bool = False
-  ) -> None:
-    self._assignment.push_feedback(
+  ) -> bool | None:
+    return self._assignment.push_feedback(
       user_id=user_id,
       score=score,
       comments=comments,
