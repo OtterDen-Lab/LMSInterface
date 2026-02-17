@@ -172,7 +172,7 @@ wheels = [
 
 [[package]]
 name = "lms-interface"
-version = "0.4.3"
+version = "0.4.4"
 source = { editable = "." }
 dependencies = [
     { name = "canvasapi" },
