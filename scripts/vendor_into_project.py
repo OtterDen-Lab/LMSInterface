@@ -13,12 +13,343 @@ Usage:
 import argparse
 import re
 import shutil
+import shlex
 import sys
+import tomllib
 from datetime import datetime
 from pathlib import Path
 
 # Files to copy from lms_interface
-FILES_TO_COPY = ['__init__.py', 'canvas_interface.py', 'classes.py']
+# Keep this list aligned with runtime imports used by canvas_interface.py.
+FILES_TO_COPY = [
+    '__init__.py',
+    'backends.py',
+    'canvas_interface.py',
+    'classes.py',
+    'helpers.py',
+    'privacy.py',
+    'interfaces.py',
+]
+
+TOOLING_CONFIG_PATH = Path("scripts/lms_vendor_tooling.toml")
+TOOLING_MANAGED_FILES = [
+    Path("scripts/check_version_bump_vendoring.sh"),
+    Path("scripts/git_bump.sh"),
+    Path("scripts/install_git_hooks.sh"),
+    Path(".githooks/pre-commit"),
+]
+
+CHECK_VERSION_BUMP_TEMPLATE = """#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${{{skip_var}:-0}}" == "1" ]]; then
+  echo "Skipping vendoring check (already handled by git bump)."
+  exit 0
+fi
+
+# When pyproject version is bumped, refresh vendored LMSInterface automatically.
+if ! git diff --cached -- pyproject.toml | grep -Eq '^[+-][[:space:]]*version[[:space:]]*='; then
+  exit 0
+fi
+
+echo "Version bump detected in pyproject.toml; syncing vendored LMSInterface..."
+
+before_snapshot="$(mktemp)"
+after_snapshot="$(mktemp)"
+trap 'rm -f "$before_snapshot" "$after_snapshot"' EXIT
+
+git diff --cached -- lms_interface pyproject.toml >"$before_snapshot" || true
+python scripts/vendor_lms_interface.py --quiet
+git add lms_interface pyproject.toml \\
+  scripts/check_version_bump_vendoring.sh \\
+  scripts/git_bump.sh \\
+  scripts/install_git_hooks.sh \\
+  scripts/lms_vendor_tooling.toml \\
+  .githooks/pre-commit
+git diff --cached -- lms_interface pyproject.toml scripts/check_version_bump_vendoring.sh scripts/git_bump.sh scripts/install_git_hooks.sh scripts/lms_vendor_tooling.toml .githooks/pre-commit >"$after_snapshot" || true
+
+if cmp -s "$before_snapshot" "$after_snapshot"; then
+  echo "Vendored LMSInterface already up to date."
+  exit 0
+fi
+
+echo "Updated and staged vendored LMSInterface changes."
+echo "Review staged diff, then run commit again."
+exit 1
+"""
+
+GIT_BUMP_TEMPLATE = """#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {{
+  cat <<'EOF'
+Usage:
+  git bump [patch|minor|major] [-m "commit message"] [--no-commit] [--dry-run] [--skip-tests] [--verbose]
+
+Behavior:
+  1. Vendor LMSInterface via `python scripts/vendor_lms_interface.py`
+  2. Run test command (unless --skip-tests)
+  3. Bump version via `uv version --bump <kind>`
+  4. Stage `pyproject.toml`, `uv.lock`, `lms_interface/`, and managed tooling scripts
+  5. Commit (unless --no-commit)
+
+Notes:
+  - Requires a clean index and working tree (tracked files).
+  - Uses normal `git commit -m ...` (no pathspec commit).
+  - Uses quiet vendoring output by default; pass --verbose for full logs.
+EOF
+}}
+
+die() {{
+  echo "ERROR: $*" >&2
+  exit 1
+}}
+
+run() {{
+  if [[ "$DRY_RUN" == "1" ]]; then
+    echo "+ $*"
+    return 0
+  fi
+  "$@"
+}}
+
+BUMP_KIND="patch"
+COMMIT_MESSAGE=""
+NO_COMMIT="0"
+DRY_RUN="0"
+VERBOSE="0"
+SKIP_TESTS="0"
+TEST_COMMAND={test_command_quoted}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    patch|minor|major)
+      BUMP_KIND="$1"
+      shift
+      ;;
+    -m|--message)
+      shift
+      [[ $# -gt 0 ]] || die "Missing value for --message"
+      COMMIT_MESSAGE="$1"
+      shift
+      ;;
+    --no-commit)
+      NO_COMMIT="1"
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN="1"
+      shift
+      ;;
+    --verbose)
+      VERBOSE="1"
+      shift
+      ;;
+    --skip-tests)
+      SKIP_TESTS="1"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+if [[ -n "$(git diff --name-only)" ]] || [[ -n "$(git diff --cached --name-only)" ]]; then
+  die "Working tree has tracked changes. Commit or stash them before running git bump."
+fi
+
+if [[ "$VERBOSE" == "1" ]]; then
+  run python scripts/vendor_lms_interface.py
+else
+  run python scripts/vendor_lms_interface.py --quiet
+fi
+
+if [[ "$SKIP_TESTS" != "1" ]] && [[ -n "$TEST_COMMAND" ]]; then
+  echo "Running tests: $TEST_COMMAND"
+  run bash -lc "$TEST_COMMAND"
+fi
+
+run uv version --bump "$BUMP_KIND"
+run git add pyproject.toml uv.lock lms_interface \\
+  scripts/check_version_bump_vendoring.sh \\
+  scripts/git_bump.sh \\
+  scripts/install_git_hooks.sh \\
+  scripts/lms_vendor_tooling.toml \\
+  .githooks/pre-commit
+
+if [[ "$NO_COMMIT" == "1" ]]; then
+  echo "Staged version bump and vendored LMSInterface updates (no commit created)."
+  exit 0
+fi
+
+if [[ -z "$COMMIT_MESSAGE" ]]; then
+  version="$(sed -n 's/^version = "\\(.*\\)"/\\1/p' pyproject.toml | head -n 1)"
+  COMMIT_MESSAGE="Bump to version ${{version}}"
+  run env {skip_var}=1 git commit -e -m "$COMMIT_MESSAGE"
+else
+  run env {skip_var}=1 git commit -m "$COMMIT_MESSAGE"
+fi
+"""
+
+INSTALL_HOOKS_TEMPLATE = """#!/usr/bin/env bash
+set -euo pipefail
+
+git config core.hooksPath .githooks
+git config alias.bump '!f(){{ repo_root="$(git rev-parse --show-toplevel)"; bash "$repo_root/scripts/git_bump.sh" "$@"; }}; f'
+
+echo "Installed repository hooks via core.hooksPath=.githooks"
+echo "Installed repository alias: git bump <patch|minor|major>"
+"""
+
+PRE_COMMIT_TEMPLATE = """#!/usr/bin/env bash
+set -euo pipefail
+
+bash scripts/check_version_bump_vendoring.sh
+{precommit_extra}
+"""
+
+
+def _read_project_name(target_root: Path) -> str:
+    pyproject = target_root / "pyproject.toml"
+    if not pyproject.exists():
+        return target_root.name
+    content = pyproject.read_text()
+    match = re.search(r'name\s*=\s*"([^"]+)"', content)
+    if match:
+        return match.group(1)
+    return target_root.name
+
+
+def _default_tooling_config(target_root: Path) -> dict[str, str]:
+    project_name = _read_project_name(target_root).lower()
+    root_name = target_root.name.lower()
+    if "autograder" in project_name or "autograder" in root_name:
+        skip_var = "AUTOGRADER_SKIP_PRECOMMIT_VENDOR"
+    elif "quizgenerator" in project_name or "quiz" in root_name:
+        skip_var = "QUIZGEN_SKIP_PRECOMMIT_VENDOR"
+    else:
+        skip_var = "LMS_SKIP_PRECOMMIT_VENDOR"
+
+    precommit_extra = ""
+    if (target_root / "scripts" / "check_repo_hygiene.sh").exists():
+        precommit_extra = "bash scripts/check_repo_hygiene.sh"
+
+    return {
+        "skip_vendor_env": skip_var,
+        "test_command": "uv run pytest -q",
+        "precommit_extra": precommit_extra,
+    }
+
+
+def _write_tooling_config(path: Path, config: dict[str, str], dry_run: bool) -> bool:
+    content = (
+        "# Managed by LMSInterface vendoring. Edit values as needed for this repo.\n"
+        "[tooling]\n"
+        f"skip_vendor_env = \"{config['skip_vendor_env']}\"\n"
+        f"test_command = \"{config['test_command']}\"\n"
+        f"precommit_extra = \"{config['precommit_extra']}\"\n"
+    )
+    if dry_run:
+        print(f"  [DRY RUN] Would create {path}")
+        return True
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    print(f"  Created {path}")
+    return True
+
+
+def _load_tooling_config(target_root: Path, dry_run: bool) -> dict[str, str] | None:
+    config_path = target_root / TOOLING_CONFIG_PATH
+    defaults = _default_tooling_config(target_root)
+    if not config_path.exists():
+        print("\nTooling config not found; creating default scripts/lms_vendor_tooling.toml")
+        if not _write_tooling_config(config_path, defaults, dry_run):
+            return None
+        return defaults
+
+    try:
+        payload = tomllib.loads(config_path.read_text())
+    except Exception as exc:
+        print(f"\nError: failed parsing {config_path}: {exc}")
+        return None
+
+    tooling = payload.get("tooling", {})
+    if not isinstance(tooling, dict):
+        print(f"\nError: {config_path} missing [tooling] table")
+        return None
+
+    config = defaults.copy()
+    for key in ("skip_vendor_env", "test_command", "precommit_extra"):
+        value = tooling.get(key)
+        if isinstance(value, str) and value.strip():
+            config[key] = value.strip()
+    return config
+
+
+def _write_text_file(path: Path, content: str, dry_run: bool, executable: bool = False) -> bool:
+    if dry_run:
+        print(f"  [DRY RUN] Would sync {path}")
+        return True
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    if executable:
+        mode = path.stat().st_mode
+        path.chmod(mode | 0o111)
+    print(f"  Synced {path}")
+    return True
+
+
+def sync_tooling_templates(target_root: Path, dry_run: bool = False) -> bool:
+    print("\nSyncing release tooling scripts")
+    config = _load_tooling_config(target_root, dry_run)
+    if config is None:
+        return False
+
+    skip_var = config["skip_vendor_env"]
+    test_command_quoted = shlex.quote(config["test_command"])
+    precommit_extra = config["precommit_extra"]
+    if precommit_extra:
+        precommit_extra = precommit_extra.strip()
+
+    targets = [
+        (
+            target_root / "scripts" / "check_version_bump_vendoring.sh",
+            CHECK_VERSION_BUMP_TEMPLATE.format(skip_var=skip_var),
+            True,
+        ),
+        (
+            target_root / "scripts" / "git_bump.sh",
+            GIT_BUMP_TEMPLATE.format(
+                skip_var=skip_var,
+                test_command_quoted=test_command_quoted,
+            ),
+            True,
+        ),
+        (
+            target_root / "scripts" / "install_git_hooks.sh",
+            INSTALL_HOOKS_TEMPLATE,
+            True,
+        ),
+        (
+            target_root / ".githooks" / "pre-commit",
+            PRE_COMMIT_TEMPLATE.format(precommit_extra=precommit_extra),
+            True,
+        ),
+    ]
+
+    success = True
+    for path, content, executable in targets:
+        success &= _write_text_file(path, content, dry_run, executable=executable)
+    return success
 
 
 def get_version(source_repo: Path) -> str:
@@ -312,6 +643,11 @@ def main():
         action="store_true",
         help="Show what would be done without making changes"
     )
+    parser.add_argument(
+        "--no-tooling-sync",
+        action="store_true",
+        help="Skip syncing release helper scripts/hooks into target project",
+    )
 
     args = parser.parse_args()
 
@@ -409,6 +745,8 @@ def main():
             args.vendor_name,
             args.dry_run
         )
+    if not args.no_tooling_sync:
+        success &= sync_tooling_templates(args.target_project, args.dry_run)
 
     print("\n" + "=" * 70)
     if args.dry_run:
