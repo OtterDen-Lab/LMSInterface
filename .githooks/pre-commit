@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# If pyproject version changes, ensure uv.lock is staged in the same commit.
+if git diff --cached -- pyproject.toml | grep -Eq '^[+-][[:space:]]*version[[:space:]]*='; then
+  if ! git diff --cached --name-only | grep -qx 'uv.lock'; then
+    echo "ERROR: pyproject version changed but uv.lock is not staged."
+    echo "Run: uv lock && git add uv.lock"
+    exit 1
+  fi
+fi
