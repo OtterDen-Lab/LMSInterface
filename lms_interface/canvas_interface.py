@@ -6,6 +6,7 @@ import logging
 import os
 import queue
 import random
+import re
 import tempfile
 import threading
 import time
@@ -805,23 +806,44 @@ class CanvasAssignment(LMSWrapper):
           log.warning(f"Failed to delete comment {comment_id}: {response.json()}")
     
     def upload_buffer_as_file(buffer: bytes, name: str):
-      suffix = os.path.splitext(name)[1]  # keep extension if needed
-      with tempfile.NamedTemporaryFile(mode="wb",
-                                       delete=False,
-                                       prefix="lms_interface_feedback_upload_",
-                                       suffix=suffix) as tmp:
-        tmp.write(buffer)
-        tmp.flush()
-        os.fsync(tmp.fileno())
-        temp_path = tmp.name  # str path
-      
-      try:
-        submission.upload_comment(temp_path)  # ✅ PathLike | str
-      finally:
-        os.remove(temp_path)
+      safe_name = os.path.basename(str(name or "attachment"))
+      safe_name = safe_name.replace('\x00', '').strip()
+      if safe_name in {"", ".", ".."}:
+        safe_name = "attachment.bin"
+
+      with tempfile.TemporaryDirectory(
+          prefix="lms_interface_feedback_upload_") as temp_dir:
+        temp_path = os.path.join(temp_dir, safe_name)
+        with open(temp_path, "wb") as tmp:
+          tmp.write(buffer)
+          tmp.flush()
+          os.fsync(tmp.fileno())
+        submission.upload_comment(temp_path)  # Canvas expects a path
+
+    def looks_like_html(text: str) -> bool:
+      if not text:
+        return False
+      return bool(re.search(r"<(html|body|div|p|table|img|h[1-6]|ul|ol|li|br|strong|em|figure)[\s/>]",
+                            text,
+                            re.IGNORECASE))
     
     if len(comments) > 0:
-      upload_buffer_as_file(comments.encode('utf-8'), "feedback.txt")
+      if looks_like_html(comments):
+        upload_buffer_as_file(comments.encode('utf-8'), "feedback.html")
+      else:
+        try:
+          submission.edit(
+            comment={
+              'text_comment': comments,
+            },
+          )
+        except (requests.exceptions.RequestException,
+                canvasapi.exceptions.CanvasException) as e:
+          log.warning(f"Failed to post inline feedback comment for {user_id}: {e}")
+          extra = _format_canvas_exception(e)
+          if extra:
+            log.warning(extra)
+          upload_buffer_as_file(comments.encode('utf-8'), "feedback.txt")
     
     for i, attachment_buffer in enumerate(attachments):
       upload_buffer_as_file(attachment_buffer.read(), attachment_buffer.name)
