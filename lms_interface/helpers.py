@@ -15,9 +15,12 @@ from lms_interface.canvas_interface import (
 )
 
 # Configure logging to actually output
-logging.basicConfig()
+logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
+# Keep Canvas HTTP request/response chatter off unless explicitly debugging.
+logging.getLogger("canvasapi.requester").setLevel(logging.WARNING)
+logging.getLogger("canvasapi").setLevel(logging.WARNING)
 
 
 def delete_empty_folders(canvas_course: CanvasCourse):
@@ -600,13 +603,22 @@ def main():
         help="Create/reuse Week modules and publish weekly slide URL links (plan-course)",
     )
     parser.add_argument(
+        "--publish-attendance",
+        action="store_true",
+        help="Create/update attendance check-in quizzes with per-section assign-to windows (plan-course)",
+    )
+    parser.add_argument(
         "--weekly-module-template",
         help="Template for weekly module names, e.g. 'Week {week_number}' (plan-course)",
     )
 
     args = parser.parse_args()
     if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
         log.setLevel(logging.DEBUG)
+        # Re-enable low-level Canvas request logs when debugging.
+        logging.getLogger("canvasapi.requester").setLevel(logging.INFO)
+        logging.getLogger("canvasapi").setLevel(logging.INFO)
 
     # Get helper function name and whether it requires assignment_id
     helper_func_name, requires_assignment = HELPERS[args.helper]
@@ -618,6 +630,14 @@ def main():
         parser.error("--limit must be >= 1")
     if helper_func_name == "plan_course" and not args.yaml_path:
         parser.error("--yaml-path is required for 'plan-course'")
+    if (
+        helper_func_name == "plan_course"
+        and (args.publish_weekly_slides or args.publish_attendance)
+        and not args.publish
+    ):
+        parser.error(
+            "--publish is required when using --publish-weekly-slides or --publish-attendance"
+        )
 
     needs_canvas_course = helper_func_name != "plan_course" or args.publish
     canvas_course = None
@@ -676,6 +696,7 @@ def main():
             output_dir=Path(args.output_dir),
             publish=args.publish,
             publish_weekly_slides=args.publish_weekly_slides,
+            publish_attendance_quizzes=args.publish_attendance,
             dry_run=args.dry_run,
             canvas_course=canvas_course,
             page_title_override=args.page_title,

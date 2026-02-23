@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import html
 import json
 import logging
 import re
+import secrets
+import string
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urljoin, urlparse, urlsplit, urlunsplit
+from zoneinfo import ZoneInfo
 
 import canvasapi
 
@@ -55,6 +59,19 @@ def _parse_date(value: str | date) -> date:
     if not isinstance(value, str):
         raise ValueError(f"Expected ISO date string, got: {value!r}")
     return datetime.strptime(value, "%Y-%m-%d").date()
+
+
+def _parse_hhmm(value: str) -> str:
+    text = str(value or "").strip()
+    try:
+        parsed = datetime.strptime(text, "%H:%M").time()
+    except ValueError as exc:
+        raise ValueError(f"Expected time in HH:MM format, got: {value!r}") from exc
+    return parsed.strftime("%H:%M")
+
+
+def _time_from_hhmm(value: str) -> time:
+    return datetime.strptime(value, "%H:%M").time()
 
 
 def _date_range(start: date, end: date) -> list[date]:
@@ -187,6 +204,12 @@ def normalize_course_plan(raw_plan: dict[str, Any]) -> dict[str, Any]:
     for section_raw in plan.get("sections", []):
         day_values = section_raw.get("meeting_days", [])
         meeting_days = [WEEKDAY_TO_INT[value] for value in day_values]
+        meeting_start_time_raw = section_raw.get("meeting_start_time")
+        meeting_start_time = (
+            _parse_hhmm(str(meeting_start_time_raw))
+            if meeting_start_time_raw is not None
+            else None
+        )
         sections.append(
             {
                 "id": section_raw["id"],
@@ -194,6 +217,17 @@ def normalize_course_plan(raw_plan: dict[str, Any]) -> dict[str, Any]:
                 "meeting_days": sorted(set(meeting_days)),
                 "meeting_day_labels": day_values,
                 "canvas_course_id": section_raw.get("canvas_course_id"),
+                "canvas_section_id": section_raw.get("canvas_section_id"),
+                "canvas_section_selector": (
+                    str(
+                        section_raw.get(
+                            "canvas_section_selector",
+                            section_raw.get("canvas_section_filter", ""),
+                        )
+                    ).strip()
+                    or None
+                ),
+                "meeting_start_time": meeting_start_time,
             }
         )
 
@@ -294,7 +328,20 @@ def normalize_course_plan(raw_plan: dict[str, Any]) -> dict[str, Any]:
     }
 
     publishing_raw = plan.get("publishing") or {}
+    attendance_raw = publishing_raw.get("attendance") or {}
     weekly_slides_indent = int(publishing_raw.get("weekly_slides_indent", 1))
+    attendance_password_env = str(
+        attendance_raw.get("password_env", "ATTENDANCE_QUIZ_PASSWORD")
+    ).strip()
+    attendance_password = attendance_raw.get("password")
+    if attendance_password is not None:
+        attendance_password = str(attendance_password).strip()
+    elif attendance_password_env:
+        import os
+
+        attendance_password = str(os.environ.get(attendance_password_env, "")).strip()
+        if not attendance_password:
+            attendance_password = None
     publishing = {
         "module_name_template": publishing_raw.get(
             "module_name_template",
@@ -317,7 +364,56 @@ def normalize_course_plan(raw_plan: dict[str, Any]) -> dict[str, Any]:
         "weekly_slides_prune_existing": bool(
             publishing_raw.get("weekly_slides_prune_existing", True)
         ),
+        "attendance": {
+            "enabled": bool(attendance_raw.get("enabled", False)),
+            "assignment_group_name": str(
+                attendance_raw.get("assignment_group_name", "Attendance")
+            ).strip(),
+            "title_prefix": str(
+                attendance_raw.get("title_prefix", "Attendance: ")
+            ),
+            "description": str(
+                attendance_raw.get(
+                    "description",
+                    "<p>Please complete this short attendance check-in.</p>",
+                )
+            ),
+            "points_possible": float(attendance_raw.get("points_possible", 1.0)),
+            "unlock_minutes_before_start": int(
+                attendance_raw.get("unlock_minutes_before_start", 10)
+            ),
+            "due_minutes_after_start": int(
+                attendance_raw.get("due_minutes_after_start", 10)
+            ),
+            "lock_minutes_after_start": int(
+                attendance_raw.get("lock_minutes_after_start", 10)
+            ),
+            "password": attendance_password,
+            "password_env": attendance_password_env,
+            "random_password_length": int(attendance_raw.get("random_password_length", 4)),
+            "rotate_random_password_on_update": bool(
+                attendance_raw.get("rotate_random_password_on_update", False)
+            ),
+            "module_section_header": str(
+                attendance_raw.get("module_section_header", "Attendence")
+            ).strip(),
+            "module_indent": max(0, int(attendance_raw.get("module_indent", 1))),
+            "include_exam_days": bool(attendance_raw.get("include_exam_days", True)),
+            "prune_section_overrides": bool(
+                attendance_raw.get("prune_section_overrides", True)
+            ),
+        },
     }
+
+    if publishing["attendance"]["enabled"]:
+        missing_time_sections = [
+            section["id"] for section in sections if not section["meeting_start_time"]
+        ]
+        if missing_time_sections:
+            raise ValueError(
+                "Attendance publishing requires `meeting_start_time` (HH:MM) for each section. "
+                f"Missing for: {', '.join(missing_time_sections)}"
+            )
 
     exam_rules_raw = plan.get("exam_rules") or {}
     exam_defaults_raw = exam_rules_raw.get("defaults") or {}
@@ -1289,13 +1385,650 @@ def _build_weekly_slide_items(
     return weekly
 
 
+def _find_quiz_by_title(canvas_course: CanvasCourse, quiz_title: str):
+    for quiz in canvas_course.course.get_quizzes():
+        if str(getattr(quiz, "title", "")).strip() == quiz_title.strip():
+            return quiz
+    return None
+
+
+def _section_display_label(canvas_section: Any) -> str:
+    section_name = str(getattr(canvas_section, "name", "")).strip()
+    section_id = getattr(canvas_section, "id", "")
+    return f"{section_name} (id={section_id})".strip()
+
+
+def _section_match_values(canvas_section: Any) -> list[str]:
+    values: list[str] = []
+    for attr in (
+        "sis_section_id",
+        "integration_id",
+    ):
+        value = getattr(canvas_section, attr, None)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            values.append(text.casefold())
+    return values
+
+
+def _resolve_canvas_section_ids(
+    canvas_course: CanvasCourse,
+    *,
+    sections: list[dict[str, Any]],
+) -> dict[str, int]:
+    canvas_sections = list(canvas_course.course.get_sections())
+    sections_by_id = {int(getattr(section, "id")): section for section in canvas_sections}
+    sections_by_name: dict[str, list[Any]] = {}
+    for section in canvas_sections:
+        key = str(getattr(section, "name", "")).strip().casefold()
+        sections_by_name.setdefault(key, []).append(section)
+
+    resolved: dict[str, int] = {}
+    for section in sections:
+        section_id = str(section["id"])
+        configured_canvas_section_id = section.get("canvas_section_id")
+        if configured_canvas_section_id is not None:
+            try:
+                canvas_section_id = int(configured_canvas_section_id)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Section '{section_id}' has invalid canvas_section_id={configured_canvas_section_id!r}; "
+                    "expected an integer."
+                ) from exc
+            canvas_section = sections_by_id.get(canvas_section_id)
+            if canvas_section is None:
+                raise ValueError(
+                    f"Section '{section_id}' references canvas_section_id={canvas_section_id}, "
+                    "but that section was not found in the course."
+                )
+            resolved[section_id] = canvas_section_id
+            continue
+
+        configured_selector = str(section.get("canvas_section_selector") or "").strip()
+        if configured_selector:
+            selector_key = configured_selector.casefold()
+            name_matches = [
+                canvas_section
+                for canvas_section in canvas_sections
+                if selector_key in str(getattr(canvas_section, "name", "")).strip().casefold()
+            ]
+            if len(name_matches) == 1:
+                resolved[section_id] = int(getattr(name_matches[0], "id"))
+                continue
+            if len(name_matches) > 1:
+                match_labels = ", ".join(
+                    _section_display_label(m) for m in name_matches
+                )
+                raise ValueError(
+                    f"Section '{section_id}' selector '{configured_selector}' matched multiple Canvas sections: "
+                    f"{match_labels}. Refine selector or set `canvas_section_id`."
+                )
+
+            metadata_matches = [
+                canvas_section
+                for canvas_section in canvas_sections
+                if any(
+                    selector_key in match_value
+                    for match_value in _section_match_values(canvas_section)
+                )
+            ]
+            if len(metadata_matches) == 1:
+                resolved[section_id] = int(getattr(metadata_matches[0], "id"))
+                continue
+            if len(metadata_matches) > 1:
+                match_labels = ", ".join(
+                    _section_display_label(m) for m in metadata_matches
+                )
+                raise ValueError(
+                    f"Section '{section_id}' selector '{configured_selector}' matched multiple Canvas sections "
+                    f"(via SIS/integration ids): {match_labels}. Refine selector or set `canvas_section_id`."
+                )
+
+            available_labels = ", ".join(
+                _section_display_label(candidate) for candidate in canvas_sections
+            )
+            raise ValueError(
+                f"Section '{section_id}' selector '{configured_selector}' did not match any Canvas section. "
+                f"Available sections: {available_labels}"
+            )
+
+        section_name_key = str(section.get("name", section_id)).strip().casefold()
+        matches = sections_by_name.get(section_name_key, [])
+        if len(matches) == 1:
+            resolved[section_id] = int(getattr(matches[0], "id"))
+            continue
+        if len(matches) > 1:
+            raise ValueError(
+                f"Section '{section_id}' name '{section.get('name')}' matched multiple Canvas sections. "
+                "Set `canvas_section_selector` or `canvas_section_id` in YAML to disambiguate."
+            )
+        available_labels = ", ".join(
+            _section_display_label(candidate) for candidate in canvas_sections
+        )
+        raise ValueError(
+            f"Could not match YAML section '{section_id}' ('{section.get('name')}') to a Canvas section. "
+            "Set `canvas_section_selector`/`canvas_section_id` in YAML or make section names match exactly. "
+            f"Available sections: {available_labels}"
+        )
+    return resolved
+
+
+def _build_attendance_quiz_plans(
+    normalized_plan: dict[str, Any],
+    calendar_json: dict[str, Any],
+    *,
+    attendance_config: dict[str, Any],
+) -> list[dict[str, Any]]:
+    timezone_name = str(normalized_plan["term"]["timezone"])
+    tzinfo = ZoneInfo(timezone_name)
+    title_prefix = str(attendance_config.get("title_prefix") or "")
+    include_exam_days = bool(attendance_config.get("include_exam_days", True))
+    unlock_minutes_before_start = int(
+        attendance_config.get("unlock_minutes_before_start", 10)
+    )
+    due_minutes_after_start = int(attendance_config.get("due_minutes_after_start", 10))
+    lock_minutes_after_start = int(
+        attendance_config.get("lock_minutes_after_start", 10)
+    )
+
+    plans: list[dict[str, Any]] = []
+    dedupe_counter: dict[str, int] = {}
+    for row in calendar_json.get("rows", []):
+        if bool(row.get("no_class")) or bool(row.get("no_class_notice")):
+            continue
+        if not include_exam_days and bool(row.get("exam_names")):
+            continue
+
+        week_number = row.get("week_number")
+        slot_in_week = row.get("slot_in_week")
+        if week_number is None:
+            continue
+
+        slot_text = str(slot_in_week).strip() if slot_in_week is not None else "Slot"
+        if isinstance(slot_in_week, int):
+            slot_title = f"Day {slot_in_week}"
+        else:
+            slot_title = slot_text or "Day"
+        if isinstance(week_number, int):
+            base_title = f"Week {week_number:02d} {slot_title}"
+        else:
+            base_title = f"Week {week_number} {slot_title}".strip()
+        quiz_title = (f"{title_prefix}{base_title}").strip()
+        dedupe_counter[quiz_title] = dedupe_counter.get(quiz_title, 0) + 1
+        if dedupe_counter[quiz_title] > 1:
+            quiz_title = f"{quiz_title} ({dedupe_counter[quiz_title]})"
+
+        windows: list[dict[str, Any]] = []
+        for section in normalized_plan["sections"]:
+            section_id = str(section["id"])
+            section_date_value = str(row.get("dates", {}).get(section_id) or "").strip()
+            if not section_date_value:
+                continue
+            meeting_start_time = section.get("meeting_start_time")
+            if not meeting_start_time:
+                continue
+            section_date = _parse_date(section_date_value)
+            section_start_dt = datetime.combine(
+                section_date,
+                _time_from_hhmm(str(meeting_start_time)),
+                tzinfo=tzinfo,
+            )
+            unlock_at = section_start_dt - timedelta(minutes=unlock_minutes_before_start)
+            due_at = section_start_dt + timedelta(minutes=due_minutes_after_start)
+            lock_at = section_start_dt + timedelta(minutes=lock_minutes_after_start)
+            windows.append(
+                {
+                    "section_id": section_id,
+                    "section_name": str(section.get("name", section_id)),
+                    "meeting_date": section_date_value,
+                    "unlock_at": unlock_at.isoformat(),
+                    "due_at": due_at.isoformat(),
+                    "lock_at": lock_at.isoformat(),
+                }
+            )
+        if not windows:
+            continue
+        plans.append(
+            {
+                "title": quiz_title,
+                "week_number": week_number,
+                "slot_in_week": slot_in_week,
+                "windows": windows,
+            }
+        )
+    return plans
+
+
+def _default_attendance_question_payload(*, quiz_title: str) -> dict[str, Any]:
+    words = [
+        "thread",
+        "kernel",
+        "process",
+        "paging",
+        "cache",
+        "mutex",
+        "signal",
+        "socket",
+        "inode",
+        "binary",
+    ]
+    digest = hashlib.sha256(quiz_title.encode("utf-8")).hexdigest()
+    offset = int(digest[:8], 16) % len(words)
+    options = ["I'm here today"]
+    for idx in range(3):
+        options.append(words[(offset + (idx * 3)) % len(words)])
+    answers = []
+    for idx, option in enumerate(options):
+        answers.append({"answer_text": option, "answer_weight": 100 if idx == 0 else 0})
+    return {
+        "question_name": "Attendance Check-in",
+        "question_text": "<p>Select \"I'm here today\" to confirm attendance.</p>",
+        "question_type": "multiple_choice_question",
+        "points_possible": 1,
+        "answers": answers,
+    }
+
+
+def _generate_random_attendance_password(
+    *,
+    length: int,
+    used_passwords: set[str],
+) -> str:
+    alphabet = string.ascii_lowercase
+    normalized_length = max(3, int(length))
+    for _ in range(64):
+        candidate = "".join(secrets.choice(alphabet) for _ in range(normalized_length))
+        if candidate not in used_passwords:
+            used_passwords.add(candidate)
+            return candidate
+    # Extremely unlikely fallback: include one extra character.
+    candidate = "".join(
+        secrets.choice(alphabet) for _ in range(normalized_length + 1)
+    )
+    used_passwords.add(candidate)
+    return candidate
+
+
+def _publish_attendance_quizzes(
+    canvas_course: CanvasCourse,
+    *,
+    normalized_plan: dict[str, Any],
+    calendar_json: dict[str, Any],
+    weekly_module_template: str,
+    dry_run: bool,
+) -> list[str]:
+    actions: list[str] = []
+    attendance_config = normalized_plan["publishing"]["attendance"]
+    if not bool(attendance_config.get("enabled", False)):
+        return actions
+
+    attendance_plans = _build_attendance_quiz_plans(
+        normalized_plan,
+        calendar_json,
+        attendance_config=attendance_config,
+    )
+    if not attendance_plans:
+        actions.append("attendance:no-quiz-plans")
+        return actions
+
+    section_id_map = _resolve_canvas_section_ids(
+        canvas_course,
+        sections=normalized_plan["sections"],
+    )
+    managed_canvas_section_ids = set(section_id_map.values())
+
+    assignment_group_name = str(
+        attendance_config.get("assignment_group_name") or "Attendance"
+    )
+    points_possible = float(attendance_config.get("points_possible", 1.0))
+    description = str(
+        attendance_config.get("description")
+        or "<p>Please complete this short attendance check-in.</p>"
+    )
+    password_value = attendance_config.get("password")
+    random_password_length = int(attendance_config.get("random_password_length", 4))
+    rotate_random_password_on_update = bool(
+        attendance_config.get("rotate_random_password_on_update", False)
+    )
+    attendance_header_value = str(
+        attendance_config.get("module_section_header") or ""
+    ).strip()
+    attendance_module_indent = max(0, int(attendance_config.get("module_indent", 1)))
+    prune_section_overrides = bool(attendance_config.get("prune_section_overrides", True))
+    used_random_passwords: set[str] = set()
+
+    def _ensure_module_published(module_obj: Any, *, module_label: str) -> None:
+        if bool(getattr(module_obj, "published", False)):
+            return
+        actions.append(f"publish-module:{module_label}")
+        if not dry_run:
+            module_obj.edit(module={"published": True})
+
+    def _ensure_module_item_published(item_obj: Any, *, item_label: str) -> None:
+        if bool(getattr(item_obj, "published", False)):
+            return
+        actions.append(f"publish-module-item:{item_label}")
+        if not dry_run:
+            item_obj.edit(module_item={"published": True})
+
+    assignment_group = None
+    if not dry_run:
+        assignment_group = canvas_course.create_assignment_group(
+            name=assignment_group_name,
+            delete_existing=False,
+        )
+
+    total_quizzes = len(attendance_plans)
+    log.info("Attendance publishing: %d quizzes planned", total_quizzes)
+    for quiz_idx, quiz_plan in enumerate(attendance_plans, start=1):
+        quiz_title = str(quiz_plan["title"])
+        windows = list(quiz_plan.get("windows", []))
+        week_number = quiz_plan.get("week_number")
+        slot_in_week = quiz_plan.get("slot_in_week")
+        window_labels: list[str] = []
+        for window in windows:
+            meeting_date_raw = str(window.get("meeting_date") or "").strip()
+            weekday_label = ""
+            if meeting_date_raw:
+                try:
+                    weekday_label = _parse_date(meeting_date_raw).strftime("%a")
+                except ValueError:
+                    weekday_label = ""
+            section_label = str(window.get("section_name") or window.get("section_id") or "")
+            if weekday_label and meeting_date_raw:
+                window_labels.append(f"{section_label} {weekday_label} {meeting_date_raw}")
+            elif meeting_date_raw:
+                window_labels.append(f"{section_label} {meeting_date_raw}")
+            else:
+                window_labels.append(section_label)
+        log.info(
+            "Attendance quiz %d/%d | Week %s Day %s | %s | %d section windows",
+            quiz_idx,
+            total_quizzes,
+            week_number,
+            slot_in_week,
+            quiz_title,
+            len(windows),
+        )
+        if window_labels:
+            log.info("  Sections: %s", " | ".join(window_labels))
+
+        existing_quiz = _find_quiz_by_title(canvas_course, quiz_title)
+        quiz_payload: dict[str, Any] = {
+            "title": quiz_title,
+            "description": description,
+            "quiz_type": "graded_survey",
+            "published": True,
+            "points_possible": points_possible,
+            "only_visible_to_overrides": True,
+            "allowed_attempts": 1,
+        }
+        if assignment_group is not None:
+            quiz_payload["assignment_group_id"] = int(getattr(assignment_group, "id"))
+        static_password_value = (
+            password_value.strip()
+            if isinstance(password_value, str) and password_value.strip()
+            else None
+        )
+        if static_password_value:
+            quiz_payload["access_code"] = static_password_value
+
+        if existing_quiz is None:
+            actions.append(f"create-attendance-quiz:{quiz_title}")
+            log.info("  Creating quiz: %s", quiz_title)
+            if static_password_value is None:
+                generated_password = _generate_random_attendance_password(
+                    length=random_password_length,
+                    used_passwords=used_random_passwords,
+                )
+                quiz_payload["access_code"] = generated_password
+                log.info("    Attendance password: %s", generated_password)
+            if dry_run:
+                for window in windows:
+                    actions.append(
+                        f"plan-attendance-window:{quiz_title}:{window['section_id']}:{window['unlock_at']}..{window['lock_at']}"
+                    )
+                    log.info(
+                        "    Plan window: %s %s -> %s",
+                        window["section_id"],
+                        window["unlock_at"],
+                        window["lock_at"],
+                    )
+                continue
+            quiz_obj = canvas_course.course.create_quiz(quiz=quiz_payload)
+        else:
+            actions.append(f"update-attendance-quiz:{quiz_title}")
+            log.info("  Updating quiz: %s", quiz_title)
+            if static_password_value is None and rotate_random_password_on_update:
+                generated_password = _generate_random_attendance_password(
+                    length=random_password_length,
+                    used_passwords=used_random_passwords,
+                )
+                quiz_payload["access_code"] = generated_password
+                log.info("    Rotated attendance password: %s", generated_password)
+            if dry_run:
+                quiz_obj = existing_quiz
+            else:
+                quiz_obj = existing_quiz.edit(quiz=quiz_payload)
+
+        module_name = None
+        try:
+            module_name = str(weekly_module_template).format(week_number=week_number)
+        except Exception:
+            module_name = f"Week {week_number}"
+
+        weekly_module = _find_module_by_name(canvas_course, module_name)
+        if weekly_module is None:
+            actions.append(f"create-module:{module_name}")
+            log.info("  Creating module for attendance quiz: %s", module_name)
+            if not dry_run:
+                weekly_module = canvas_course.course.create_module(
+                    module={"name": module_name, "published": True}
+                )
+        else:
+            actions.append(f"reuse-module:{module_name}")
+
+        if weekly_module is not None:
+            _ensure_module_published(weekly_module, module_label=module_name)
+
+        existing_subheader = None
+        existing_quiz_item = None
+        if weekly_module is not None:
+            for module_item in weekly_module.get_module_items():
+                item_type = str(getattr(module_item, "type", "")).lower().replace(
+                    "_", ""
+                )
+                item_title = str(getattr(module_item, "title", "")).strip()
+                if (
+                    attendance_header_value
+                    and existing_subheader is None
+                    and item_type == "subheader"
+                    and item_title == attendance_header_value
+                ):
+                    existing_subheader = module_item
+                    continue
+                if item_type == "quiz":
+                    content_id = getattr(module_item, "content_id", None)
+                    try:
+                        if content_id is not None and int(content_id) == int(
+                            getattr(quiz_obj, "id")
+                        ):
+                            existing_quiz_item = module_item
+                            continue
+                    except Exception:
+                        pass
+                if item_title == quiz_title:
+                    existing_quiz_item = module_item
+
+        if attendance_header_value:
+            if existing_subheader is None:
+                actions.append(
+                    f"add-attendance-header:{module_name}:{attendance_header_value}"
+                )
+                log.info("  Adding attendance header in module '%s'", module_name)
+                if not dry_run and weekly_module is not None:
+                    existing_subheader = weekly_module.create_module_item(
+                        module_item={
+                            "type": "SubHeader",
+                            "title": attendance_header_value,
+                            "published": True,
+                        }
+                    )
+                    _ensure_module_item_published(
+                        existing_subheader,
+                        item_label=f"{module_name}:{attendance_header_value}",
+                    )
+            elif existing_subheader is not None:
+                actions.append(
+                    f"attendance-header-exists:{module_name}:{attendance_header_value}"
+                )
+                _ensure_module_item_published(
+                    existing_subheader,
+                    item_label=f"{module_name}:{attendance_header_value}",
+                )
+
+        assignment_id = getattr(quiz_obj, "assignment_id", None)
+        if assignment_id is None:
+            log.warning(
+                "Attendance quiz '%s' missing assignment_id; skipping section overrides.",
+                quiz_title,
+            )
+            continue
+
+        assignment = canvas_course.course.get_assignment(int(assignment_id))
+        if not dry_run:
+            assignment.edit(
+                assignment={
+                    "published": True,
+                    "only_visible_to_overrides": True,
+                    "points_possible": points_possible,
+                }
+            )
+
+        existing_overrides_by_section: dict[int, Any] = {}
+        for override in assignment.get_overrides():
+            section_value = getattr(override, "course_section_id", None)
+            if section_value is None:
+                continue
+            try:
+                section_id = int(section_value)
+            except (TypeError, ValueError):
+                continue
+            existing_overrides_by_section[section_id] = override
+
+        target_canvas_section_ids: set[int] = set()
+        for window in windows:
+            section_id = str(window["section_id"])
+            canvas_section_id = int(section_id_map[section_id])
+            target_canvas_section_ids.add(canvas_section_id)
+            override_payload = {
+                "course_section_id": canvas_section_id,
+                "unlock_at": window["unlock_at"],
+                "due_at": window["due_at"],
+                "lock_at": window["lock_at"],
+            }
+            existing_override = existing_overrides_by_section.get(canvas_section_id)
+            if existing_override is None:
+                actions.append(
+                    f"create-attendance-override:{quiz_title}:{section_id}:{window['unlock_at']}..{window['lock_at']}"
+                )
+                log.info(
+                    "    Creating section window: %s %s -> %s",
+                    section_id,
+                    window["unlock_at"],
+                    window["lock_at"],
+                )
+                if not dry_run:
+                    assignment.create_override(assignment_override=override_payload)
+            else:
+                actions.append(
+                    f"update-attendance-override:{quiz_title}:{section_id}:{window['unlock_at']}..{window['lock_at']}"
+                )
+                log.info(
+                    "    Updating section window: %s %s -> %s",
+                    section_id,
+                    window["unlock_at"],
+                    window["lock_at"],
+                )
+                if not dry_run:
+                    existing_override.edit(assignment_override=override_payload)
+
+        if prune_section_overrides:
+            for canvas_section_id, existing_override in existing_overrides_by_section.items():
+                if (
+                    canvas_section_id in managed_canvas_section_ids
+                    and canvas_section_id not in target_canvas_section_ids
+                ):
+                    actions.append(
+                        f"delete-attendance-override:{quiz_title}:section-{canvas_section_id}"
+                    )
+                    log.info(
+                        "    Removing stale section window: section-%s",
+                        canvas_section_id,
+                    )
+                    if not dry_run:
+                        existing_override.delete()
+
+        if existing_quiz_item is None:
+            actions.append(f"add-attendance-module-item:{module_name}:{quiz_title}")
+            log.info(
+                "  Adding attendance quiz module item: %s -> %s",
+                module_name,
+                quiz_title,
+            )
+            if not dry_run and weekly_module is not None:
+                existing_quiz_item = weekly_module.create_module_item(
+                    module_item={
+                        "type": "Quiz",
+                        "content_id": int(getattr(quiz_obj, "id")),
+                        "title": quiz_title,
+                        "indent": attendance_module_indent,
+                        "published": True,
+                    }
+                )
+        else:
+            actions.append(f"attendance-module-item-exists:{module_name}:{quiz_title}")
+            if not dry_run:
+                existing_quiz_item.edit(
+                    module_item={
+                        "title": quiz_title,
+                        "indent": attendance_module_indent,
+                        "published": True,
+                    }
+                )
+
+        if existing_quiz_item is not None:
+            _ensure_module_item_published(
+                existing_quiz_item,
+                item_label=f"{module_name}:{quiz_title}",
+            )
+
+        existing_questions = list(quiz_obj.get_questions())
+        if existing_questions:
+            actions.append(f"attendance-question-exists:{quiz_title}")
+            log.info("    Attendance question already exists")
+        else:
+            actions.append(f"add-attendance-question:{quiz_title}")
+            log.info("    Adding default attendance question")
+            if not dry_run:
+                quiz_obj.create_question(
+                    question=_default_attendance_question_payload(quiz_title=quiz_title)
+                )
+
+    return actions
+
+
 def publish_calendar_to_canvas(
     canvas_course: CanvasCourse,
     *,
+    normalized_plan: dict[str, Any],
     calendar_json: dict[str, Any],
     page_title: str,
     module_name: str | None,
     publish_weekly_slides: bool,
+    publish_attendance_quizzes: bool,
     weekly_module_template: str,
     weekly_slides_title_prefix: str,
     weekly_slides_indent: int,
@@ -1652,6 +2385,16 @@ def publish_calendar_to_canvas(
                         item_label=f"{weekly_module_name}:{title}",
                     )
 
+    if publish_attendance_quizzes:
+        attendance_actions = _publish_attendance_quizzes(
+            canvas_course,
+            normalized_plan=normalized_plan,
+            calendar_json=calendar_json,
+            weekly_module_template=weekly_module_template,
+            dry_run=dry_run,
+        )
+        actions.extend(attendance_actions)
+
     return {
         "dry_run": dry_run,
         "actions": actions,
@@ -1659,6 +2402,7 @@ def publish_calendar_to_canvas(
         "page_url": page_url,
         "module_name": module_name,
         "publish_weekly_slides": publish_weekly_slides,
+        "publish_attendance_quizzes": publish_attendance_quizzes,
         "weekly_module_template": weekly_module_template,
     }
 
@@ -1669,6 +2413,7 @@ def build_course_calendar(
     output_dir: str | Path,
     publish: bool = False,
     publish_weekly_slides: bool = False,
+    publish_attendance_quizzes: bool = False,
     dry_run: bool = True,
     canvas_course: CanvasCourse | None = None,
     page_title_override: str | None = None,
@@ -1736,10 +2481,12 @@ def build_course_calendar(
         )
         publish_result = publish_calendar_to_canvas(
             canvas_course,
+            normalized_plan=normalized,
             calendar_json=calendar_json,
             page_title=page_title,
             module_name=module_name_value,
             publish_weekly_slides=publish_weekly_slides,
+            publish_attendance_quizzes=publish_attendance_quizzes,
             weekly_module_template=weekly_module_template,
             weekly_slides_title_prefix=normalized["publishing"][
                 "weekly_slides_title_prefix"

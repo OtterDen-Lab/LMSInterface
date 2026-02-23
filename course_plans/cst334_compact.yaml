@@ -13,23 +13,40 @@ term:
     kind: break
     start_date: '2026-03-30'
     end_date: '2026-04-02'
+
 sections:
 - id: sec_mw
   name: Mon/Wed
-  meeting_days:
-  - Mon
-  - Wed
+  meeting_days: [Mon, Wed]
+  meeting_start_time: "10:00"
+  canvas_section_selector: "01"
+
 - id: sec_tth
   name: Tue/Thu
-  meeting_days:
-  - Tue
-  - Thu
+  meeting_days: [Tue, Thu]
+  meeting_start_time: "12:00"
+  canvas_section_selector: "02"
+  
 sync:
   mode: lockstep_by_topic
   skip_for_all_if_any_section_skips: true
   carry_over_policy: defer_topic
   topics_per_meeting: 2
   
+publishing:
+  module_name_template: Week {week_number}
+  schedule_page_title: CST334 Schedule
+  create_calendar_html: true
+  
+  attendance:
+    enabled: true
+    assignment_group_name: Attendance
+    title_prefix: "Attendance: "
+    unlock_minutes_before_start: 10
+    due_minutes_after_start: 10
+    lock_minutes_after_start: 10
+    include_exam_days: false
+    
 topics:
 
 ## Exam 1 ##
@@ -74,6 +91,7 @@ topics:
   - OSTEP 06 - limited-direct-execution.pdf
   readings:
   - https://pages.cs.wisc.edu/~remzi/OSTEP/cpu-mechanisms.pdf
+- placeholder: tbd
 - id: process-scheduling
   title: process scheduling (OS 7)
   duration_hours: 2
@@ -88,7 +106,6 @@ topics:
   - OSTEP 08 - multi-level-feedback-queue.pdf
   readings:
   - https://pages.cs.wisc.edu/~remzi/OSTEP/cpu-sched-mlfq.pdf
-- placeholder: tbd
 
 ## Exam 2 ##
 - id: address-spaces
@@ -318,10 +335,8 @@ exam_rules:
     fixed_date_overrides:
       sec_tth: '2026-05-12'
       sec_mw: '2026-05-13'
-publishing:
-  module_name_template: Week {week_number}
-  schedule_page_title: CST334 Schedule
-  create_calendar_html: true
+      
+      
 exam_coverage:
   Exam 1:
   - course-intro

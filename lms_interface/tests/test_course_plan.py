@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
+
 from lms_interface.course_plan import (
+    _build_attendance_quiz_plans,
     _build_weekly_slide_items,
+    _resolve_canvas_section_ids,
     build_schedule,
     infer_title_from_id,
     normalize_course_plan,
@@ -81,6 +87,8 @@ def test_normalize_course_plan_sets_weekly_slides_publishing_defaults():
     assert normalized["publishing"]["weekly_slides_indent"] == 1
     assert normalized["publishing"]["weekly_slides_section_header"] == "Slides"
     assert normalized["publishing"]["weekly_slides_prune_existing"] is True
+    assert normalized["publishing"]["attendance"]["module_section_header"] == "Attendence"
+    assert normalized["publishing"]["attendance"]["module_indent"] == 1
 
 
 def test_normalize_course_plan_respects_weekly_slides_publishing_overrides():
@@ -98,6 +106,114 @@ def test_normalize_course_plan_respects_weekly_slides_publishing_overrides():
     assert normalized["publishing"]["weekly_slides_indent"] == 2
     assert normalized["publishing"]["weekly_slides_section_header"] == "Lecture Links"
     assert normalized["publishing"]["weekly_slides_prune_existing"] is False
+
+
+def test_normalize_course_plan_attendance_requires_meeting_start_time():
+    raw_plan = _base_plan()
+    raw_plan["publishing"] = {
+        "attendance": {
+            "enabled": True,
+        }
+    }
+
+    with pytest.raises(ValueError, match="meeting_start_time"):
+        normalize_course_plan(raw_plan)
+
+
+def test_build_attendance_quiz_plans_uses_section_windows_and_skips_exam_rows():
+    raw_plan = _base_plan()
+    raw_plan["sections"][0]["meeting_start_time"] = "09:00"
+    raw_plan["sections"][1]["meeting_start_time"] = "13:30"
+    raw_plan["publishing"] = {
+        "attendance": {
+            "enabled": True,
+            "include_exam_days": False,
+            "title_prefix": "Attendance: ",
+            "unlock_minutes_before_start": 10,
+            "due_minutes_after_start": 10,
+            "lock_minutes_after_start": 10,
+        }
+    }
+    normalized = normalize_course_plan(raw_plan)
+    schedule, _ = build_schedule(normalized)
+
+    plans = _build_attendance_quiz_plans(
+        normalized,
+        schedule,
+        attendance_config=normalized["publishing"]["attendance"],
+    )
+
+    assert len(plans) == 2
+    assert plans[0]["title"] == "Attendance: Week 01 Day 1"
+    windows_by_section = {w["section_id"]: w for w in plans[0]["windows"]}
+    assert windows_by_section["sec_mw"]["unlock_at"] == "2026-01-05T08:50:00-08:00"
+    assert windows_by_section["sec_mw"]["due_at"] == "2026-01-05T09:10:00-08:00"
+    assert windows_by_section["sec_tth"]["unlock_at"] == "2026-01-06T13:20:00-08:00"
+    assert windows_by_section["sec_tth"]["lock_at"] == "2026-01-06T13:40:00-08:00"
+
+
+def test_resolve_canvas_section_ids_supports_selector_filter():
+    canvas_course = SimpleNamespace(
+        course=SimpleNamespace(
+            get_sections=lambda: [
+                SimpleNamespace(id=101, name="CST334-01 Lecture", sis_section_id="33401"),
+                SimpleNamespace(id=102, name="CST334-02 Lecture", sis_section_id="33402"),
+            ]
+        )
+    )
+    section_defs = [
+        {"id": "sec_a", "name": "Mon/Wed", "canvas_section_selector": "01"},
+        {"id": "sec_b", "name": "Tue/Thu", "canvas_section_selector": "02"},
+    ]
+
+    resolved = _resolve_canvas_section_ids(canvas_course, sections=section_defs)
+
+    assert resolved == {"sec_a": 101, "sec_b": 102}
+
+
+def test_resolve_canvas_section_ids_selector_requires_unique_match():
+    canvas_course = SimpleNamespace(
+        course=SimpleNamespace(
+            get_sections=lambda: [
+                SimpleNamespace(id=101, name="CST334-01 Lecture", sis_section_id="33401"),
+                SimpleNamespace(id=201, name="CST335-01 Lecture", sis_section_id="33501"),
+            ]
+        )
+    )
+    section_defs = [
+        {"id": "sec_a", "name": "Mon/Wed", "canvas_section_selector": "01"},
+    ]
+
+    with pytest.raises(ValueError, match="matched multiple Canvas sections"):
+        _resolve_canvas_section_ids(canvas_course, sections=section_defs)
+
+
+def test_resolve_canvas_section_ids_selector_prefers_name_matches():
+    canvas_course = SimpleNamespace(
+        course=SimpleNamespace(
+            get_sections=lambda: [
+                SimpleNamespace(
+                    id=40577,
+                    name="CST334-01_2262: Operating Systems",
+                    sis_section_id="CST334-01_2262",
+                    integration_id="TERM-202601-A",
+                ),
+                SimpleNamespace(
+                    id=41490,
+                    name="CST334-02_2262: Operating Systems",
+                    sis_section_id="CST334-02_2262",
+                    integration_id="TERM-202601-B",
+                ),
+            ]
+        )
+    )
+    section_defs = [
+        {"id": "sec_mw", "canvas_section_selector": "01"},
+    ]
+
+    resolved = _resolve_canvas_section_ids(canvas_course, sections=section_defs)
+
+    assert resolved == {"sec_mw": 40577}
 
 
 def test_normalize_course_plan_expands_relative_resources_with_base_urls():
