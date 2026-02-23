@@ -315,6 +315,9 @@ exam_rules:
       sec_tth: '2026-04-16'
   - name: Exam 4
     through_topic: tbd-4
+    fixed_date_overrides:
+      sec_tth: '2026-05-12'
+      sec_mw: '2026-05-13'
 publishing:
   module_name_template: Week {week_number}
   schedule_page_title: CST334 Schedule

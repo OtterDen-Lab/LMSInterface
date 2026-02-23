@@ -146,6 +146,20 @@ def test_render_calendar_html_contains_topics_and_exam_badge():
     assert "Exam 1" in html_output
     assert "Mon/Wed" in html_output
     assert "Tue/Thu" in html_output
+    assert "Other Resources" not in html_output
+    assert "font-size:16px;font-weight:700;letter-spacing:0.2px;" in html_output
+
+
+def test_render_calendar_html_shows_other_resources_column_when_present():
+    raw_plan = _base_plan()
+    raw_plan["topics"][0]["resources"] = ["https://example.com/extra1.pdf"]
+    normalized = normalize_course_plan(raw_plan)
+    schedule, _ = build_schedule(normalized)
+
+    html_output = render_calendar_html(normalized, schedule)
+
+    assert "Other Resources" in html_output
+    assert "extra1.pdf" in html_output
 
 
 def test_build_weekly_slide_items_groups_by_week_and_deduplicates_urls():
@@ -303,6 +317,96 @@ def test_build_schedule_fixed_exam_outside_class_slots_adds_exam_row():
     assert exam_row["slot_in_week"] == "Exam"
     assert exam_row["topic_ids"] == []
     assert exam_row["dates"]["sec_mw"] == "2026-01-16"
+
+
+def test_build_schedule_adds_no_class_rows_for_globally_blocked_meeting_days():
+    plan = {
+        "version": "1.1",
+        "term": {
+            "start_date": "2026-01-05",
+            "end_date": "2026-01-09",
+            "timezone": "America/Los_Angeles",
+            "global_no_class_dates": ["2026-01-07", "2026-01-08"],
+        },
+        "sections": [
+            {"id": "sec_mw", "name": "Mon/Wed", "meeting_days": ["Mon", "Wed"]},
+            {"id": "sec_tth", "name": "Tue/Thu", "meeting_days": ["Tue", "Thu"]},
+        ],
+        "sync": {
+            "mode": "lockstep_by_topic",
+            "skip_for_all_if_any_section_skips": True,
+        },
+        "topics": [
+            {"id": "topic-1", "title": "Topic 1"},
+        ],
+    }
+
+    normalized = normalize_course_plan(plan)
+    schedule, warnings = build_schedule(normalized)
+
+    assert warnings == []
+    no_class_rows = [row for row in schedule["rows"] if row.get("no_class")]
+    assert len(no_class_rows) == 1
+    row = no_class_rows[0]
+    assert row["slot_in_week"] == 2
+    assert row["dates"]["sec_mw"] == "2026-01-07"
+    assert row["dates"]["sec_tth"] == "2026-01-08"
+    assert "No class" in str(row["no_class_label"])
+
+
+def test_build_schedule_break_week_is_notice_and_not_counted_as_week():
+    plan = {
+        "version": "1.1",
+        "term": {
+            "start_date": "2026-01-05",
+            "end_date": "2026-01-23",
+            "timezone": "America/Los_Angeles",
+            "breaks": [
+                {
+                    "name": "Spring Break",
+                    "start_date": "2026-01-12",
+                    "end_date": "2026-01-16",
+                }
+            ],
+        },
+        "sections": [
+            {"id": "sec_mw", "name": "Mon/Wed", "meeting_days": ["Mon", "Wed"]},
+            {"id": "sec_tth", "name": "Tue/Thu", "meeting_days": ["Tue", "Thu"]},
+        ],
+        "sync": {
+            "mode": "lockstep_by_topic",
+            "skip_for_all_if_any_section_skips": True,
+        },
+        "topics": [
+            {"id": "topic-1", "title": "Topic 1"},
+            {"id": "topic-2", "title": "Topic 2"},
+            {"id": "topic-3", "title": "Topic 3"},
+            {"id": "topic-4", "title": "Topic 4"},
+        ],
+    }
+
+    normalized = normalize_course_plan(plan)
+    schedule, warnings = build_schedule(normalized)
+
+    assert warnings == []
+    notice_rows = [row for row in schedule["rows"] if row.get("no_class_notice")]
+    assert len(notice_rows) == 1
+    notice = notice_rows[0]
+    assert notice["week_number"] is None
+    assert notice["no_class_label"] == "No class: Spring Break"
+    assert notice["no_class_dates"] == [
+        "2026-01-12",
+        "2026-01-13",
+        "2026-01-14",
+        "2026-01-15",
+    ]
+
+    instructional_weeks = [
+        row["week_number"]
+        for row in schedule["rows"]
+        if row.get("week_number") is not None and not row.get("no_class")
+    ]
+    assert max(instructional_weeks) == 2
 
 
 def test_normalize_course_plan_supports_reusable_placeholders():

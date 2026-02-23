@@ -410,6 +410,31 @@ def _next_break_start_after(term: dict[str, Any], pivot: date) -> date | None:
     return min(starts) if starts else None
 
 
+def _no_class_labels_for_date(
+    term: dict[str, Any],
+    *,
+    section_id: str,
+    target_date: date,
+) -> list[str]:
+    labels: list[str] = []
+    if target_date in term["global_no_class_dates"]:
+        labels.append("No class")
+    for break_period in term["breaks"]:
+        applies_to = break_period["applies_to"]
+        if applies_to and section_id not in applies_to:
+            continue
+        if break_period["start_date"] <= target_date <= break_period["end_date"]:
+            labels.append(str(break_period["name"]))
+    return labels
+
+
+def _normalize_no_class_label(label: str) -> str:
+    normalized = str(label).strip()
+    # Keep break labels concise in schedule notices (e.g., "Break week 11" -> "Break week").
+    normalized = re.sub(r"(?i)\bbreak week\s+\d+\b", "Break week", normalized)
+    return normalized
+
+
 def _slot_index_for_section_date(
     slots: list[dict[str, Any]],
     *,
@@ -680,6 +705,11 @@ def build_schedule(plan: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     warnings.extend(allocation_warnings)
     warnings.extend(exam_warnings)
 
+    topic_to_exams: dict[str, set[str]] = {}
+    for exam_name, topic_ids in plan["exam_coverage"].items():
+        for topic_id in topic_ids:
+            topic_to_exams.setdefault(topic_id, set()).add(exam_name)
+
     rows = []
     slot_exam_lookup: dict[int, list[str]] = {}
     for exam_name, slot_indices in exam_slots_by_name.items():
@@ -696,13 +726,16 @@ def build_schedule(plan: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
         topic_ids: list[str] = []
         topic_titles: list[str] = []
         topic_allocations: list[dict[str, Any]] = []
+        coverage_exams: set[str] = set()
         for allocation in allocations:
             topic = allocation["topic"]
             hours = int(allocation["hours"])
+            topic_ids.append(topic["id"])
+            topic_exam_names = sorted(topic_to_exams.get(topic["id"], set()))
+            coverage_exams.update(topic_exam_names)
             readings.extend(topic["readings"])
             lecture_slides.extend(topic["lecture_slides"])
             resources.extend(topic["resources"])
-            topic_ids.append(topic["id"])
             label = topic["title"] if hours == 1 else f"{topic['title']} ({hours}h)"
             topic_titles.append(label)
             topic_allocations.append(
@@ -726,6 +759,7 @@ def build_schedule(plan: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
                 "topic_id": primary_topic["id"] if primary_topic else None,
                 "topic_title": primary_topic["title"] if primary_topic else None,
                 "exam_names": exam_names,
+                "coverage_exams": sorted(coverage_exams),
                 "readings": readings,
                 "lecture_slides": lecture_slides,
                 "resources": resources,
@@ -733,8 +767,80 @@ def build_schedule(plan: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
                     bool(allocation["topic"]["new_material"])
                     for allocation in allocations
                 ),
+                "no_class": False,
+                "no_class_label": None,
+                "_week_start": slot["week_start"],
             }
         )
+
+    existing_slot_keys = {(slot["week_start"], slot["slot_in_week"]) for slot in slots}
+    no_class_rows_by_key: dict[tuple[date, int], dict[str, Any]] = {}
+    term_start = plan["term"]["start_date"]
+    term_end = plan["term"]["end_date"]
+    for section in sections:
+        section_id = section["id"]
+        day_to_slot_in_week = {
+            day_value: idx for idx, day_value in enumerate(section["meeting_days"], start=1)
+        }
+        blocked_dates = sorted(_blocked_dates_for_section(plan["term"], section_id))
+        for blocked_date in blocked_dates:
+            if blocked_date < term_start or blocked_date > term_end:
+                continue
+            slot_in_week = day_to_slot_in_week.get(blocked_date.weekday())
+            if slot_in_week is None:
+                continue
+            week_start = blocked_date - timedelta(days=blocked_date.weekday())
+            key = (week_start, slot_in_week)
+            if key in existing_slot_keys:
+                continue
+
+            candidate_row = no_class_rows_by_key.get(key)
+            if candidate_row is None:
+                candidate_row = {
+                    "week_number": 0,
+                    "slot_in_week": slot_in_week,
+                    "dates": {sid: None for sid in section_ids},
+                    "topic_ids": [],
+                    "topic_titles": [],
+                    "topic_allocations": [],
+                    "topic_id": None,
+                    "topic_title": None,
+                    "exam_names": [],
+                    "coverage_exams": [],
+                    "readings": [],
+                    "lecture_slides": [],
+                    "resources": [],
+                    "new_material": False,
+                    "no_class": True,
+                    "no_class_label": "No class",
+                    "_week_start": week_start,
+                    "_labels": set(),
+                }
+                no_class_rows_by_key[key] = candidate_row
+
+            candidate_row["dates"][section_id] = blocked_date.isoformat()
+            for label in _no_class_labels_for_date(
+                plan["term"],
+                section_id=section_id,
+                target_date=blocked_date,
+            ):
+                candidate_row["_labels"].add(label)
+
+    for candidate_row in no_class_rows_by_key.values():
+        labels = sorted(candidate_row.pop("_labels"))
+        if labels:
+            if labels == ["No class"]:
+                candidate_row["no_class_label"] = "No class"
+            else:
+                normalized_labels = [
+                    _normalize_no_class_label(label)
+                    for label in labels
+                    if label != "No class"
+                ]
+                candidate_row["no_class_label"] = (
+                    "No class: " + ", ".join(sorted(set(normalized_labels or labels)))
+                )
+        rows.append(candidate_row)
 
     exams_with_slot_rows = {
         exam_name for exam_names in slot_exam_lookup.values() for exam_name in exam_names
@@ -772,29 +878,109 @@ def build_schedule(plan: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
                 "topic_id": None,
                 "topic_title": None,
                 "exam_names": [exam_name],
+                "coverage_exams": [],
                 "readings": [],
                 "lecture_slides": [],
                 "resources": [],
                 "new_material": False,
+                "no_class": False,
+                "no_class_label": None,
+                "_week_start": exam_week_start,
             }
         )
 
+    week_starts_in_order = sorted(
+        {
+            row["_week_start"]
+            for row in rows
+            if not bool(row.get("no_class"))
+        },
+    )
+    week_number_by_start = {
+        week_start: idx for idx, week_start in enumerate(week_starts_in_order, start=1)
+    }
+    for row in rows:
+        row["week_number"] = week_number_by_start.get(row["_week_start"])
+
     rows.sort(
         key=lambda row: (
-            int(row["week_number"]),
+            row["_week_start"],
             0 if isinstance(row.get("slot_in_week"), int) else 1,
             row.get("slot_in_week"),
         )
     )
 
+    grouped_no_class_rows: dict[date, list[dict[str, Any]]] = {}
+    for row in rows:
+        if bool(row.get("no_class")) and row.get("week_number") is None:
+            grouped_no_class_rows.setdefault(row["_week_start"], []).append(row)
+
+    filtered_rows: list[dict[str, Any]] = []
+    emitted_no_class_weeks: set[date] = set()
+    for row in rows:
+        week_start = row["_week_start"]
+        if bool(row.get("no_class")) and row.get("week_number") is None:
+            if week_start in emitted_no_class_weeks:
+                continue
+            emitted_no_class_weeks.add(week_start)
+            group_rows = grouped_no_class_rows.get(week_start, [row])
+            labels = [
+                str(group_row.get("no_class_label") or "No class")
+                for group_row in group_rows
+                if str(group_row.get("no_class_label") or "").strip()
+            ]
+            unique_labels = sorted(set(labels)) or ["No class"]
+            all_dates = sorted(
+                {
+                    date_value
+                    for group_row in group_rows
+                    for date_value in group_row.get("dates", {}).values()
+                    if date_value
+                }
+            )
+            notice_label = unique_labels[0]
+            if len(unique_labels) > 1:
+                notice_label = "No class"
+            filtered_rows.append(
+                {
+                    "week_number": None,
+                    "slot_in_week": "",
+                    "dates": {sid: None for sid in section_ids},
+                    "topic_ids": [],
+                    "topic_titles": [],
+                    "topic_allocations": [],
+                    "topic_id": None,
+                    "topic_title": None,
+                    "exam_names": [],
+                    "coverage_exams": [],
+                    "readings": [],
+                    "lecture_slides": [],
+                    "resources": [],
+                    "new_material": False,
+                    "no_class": True,
+                    "no_class_notice": True,
+                    "no_class_label": notice_label,
+                    "no_class_dates": all_dates,
+                }
+            )
+            continue
+        filtered_rows.append(row)
+
+    for row in filtered_rows:
+        row.pop("_week_start", None)
+
     schedule = {
         "sections": sections,
-        "rows": rows,
+        "rows": filtered_rows,
         "exam_dates": exam_dates,
         "term": {
             "start_date": plan["term"]["start_date"].isoformat(),
             "end_date": plan["term"]["end_date"].isoformat(),
             "timezone": plan["term"]["timezone"],
+            "global_no_class_dates": [
+                d.isoformat()
+                for d in sorted(plan["term"]["global_no_class_dates"])
+            ],
             "breaks": [
                 {
                     "name": b["name"],
@@ -832,14 +1018,18 @@ def render_calendar_html(
     calendar_json: dict[str, Any],
 ) -> str:
     section_columns = calendar_json["sections"]
-    exam_lookup: dict[tuple[str, str], list[str]] = {}
-    for exam_name, section_dates in calendar_json["exam_dates"].items():
-        for section_id, date_value in section_dates.items():
-            exam_lookup.setdefault((section_id, date_value), []).append(exam_name)
+    show_other_resources = any(
+        bool(row.get("resources"))
+        for row in calendar_json.get("rows", [])
+        if not bool(row.get("no_class_notice"))
+    )
 
     break_items = []
     for break_period in calendar_json["term"]["breaks"]:
-        label = f"{break_period['name']}: {break_period['start_date']} to {break_period['end_date']}"
+        break_name = _normalize_no_class_label(str(break_period["name"]))
+        label = (
+            f"{break_name}: {break_period['start_date']} to {break_period['end_date']}"
+        )
         break_items.append(f"<li>{html.escape(label)}</li>")
     break_html = (
         "<ul>" + "".join(break_items) + "</ul>" if break_items else "<p>None</p>"
@@ -847,18 +1037,39 @@ def render_calendar_html(
 
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
     page_title = html.escape(normalized_plan["publishing"]["schedule_page_title"])
+    today = date.today()
+    cell_style = "border:1px solid #ccc;padding:8px;vertical-align:top;"
+    header_style = (
+        "border:1px solid #ccc;padding:8px;vertical-align:top;background:#f5f5f5;"
+    )
 
     rows_html = []
     for row in calendar_json["rows"]:
+        if bool(row.get("no_class_notice")):
+            notice_text = str(row.get("no_class_label") or "No class")
+            total_columns = 2 + len(section_columns) + 3 + (
+                1 if show_other_resources else 0
+            )
+            rows_html.append(
+                '<tr class="no-class-notice-row">'
+                f'<td colspan="{total_columns}" style="{cell_style}"><strong>{html.escape(notice_text)}</strong></td>'
+                "</tr>"
+            )
+            continue
+
         titles = row.get("topic_titles") or []
         exam_names = row.get("exam_names") or []
-        if titles:
+        coverage_exams = row.get("coverage_exams") or []
+        no_class = bool(row.get("no_class"))
+        if no_class:
+            topic_title = f"<em>{html.escape(str(row.get('no_class_label') or 'No class'))}</em>"
+        elif titles:
             topic_title = "<br/>".join(
                 f"<strong>{html.escape(title)}</strong>" for title in titles
             )
         elif exam_names:
             topic_title = "<br/>".join(
-                f"<strong>{html.escape(f'Exam: {exam}')}</strong>"
+                f"<strong>{html.escape(f'EXAM DAY: {exam}')}</strong>"
                 for exam in exam_names
             )
         else:
@@ -873,42 +1084,124 @@ def render_calendar_html(
         if not extra_html:
             extra_html = "&nbsp;"
 
+        row_dates = []
+        for section in section_columns:
+            section_id = section["id"]
+            date_value = row["dates"].get(section_id)
+            if date_value:
+                try:
+                    row_dates.append(_parse_date(date_value))
+                except ValueError:
+                    pass
+
+        row_status_class = "upcoming-row"
+        if row_dates:
+            if max(row_dates) < today:
+                row_status_class = "past-row"
+            elif min(row_dates) <= today <= max(row_dates):
+                row_status_class = "current-row"
+
+        row_classes = [row_status_class]
+        if no_class:
+            row_classes.append("no-class-row")
+        elif exam_names:
+            row_classes.append("exam-row")
+
+        coverage_html = ""
+        if coverage_exams and not no_class and not exam_names:
+            coverage_html = (
+                '<div style="margin-top:6px;"><em>Included on: '
+                + html.escape(", ".join(coverage_exams))
+                + "</em></div>"
+            )
+
+        row_cell_style = cell_style
+        topic_cell_style = cell_style
+        if exam_names and not no_class:
+            row_cell_style = (
+                cell_style
+                + "background:#ffe6c9;border-top:3px solid #2b6cb0;border-bottom:3px solid #2b6cb0;"
+            )
+            topic_cell_style = (
+                row_cell_style
+                + "font-size:16px;font-weight:700;letter-spacing:0.2px;"
+            )
+
         cells = [
-            f"<td>{row['week_number']}</td>",
-            f"<td>{row['slot_in_week']}</td>",
-            f"<td>{topic_title if topic_title else '&nbsp;'}</td>",
-            f"<td>{readings_html}</td>",
-            f"<td>{slides_html}</td>",
-            f"<td>{extra_html}</td>",
+            f"<td style=\"{row_cell_style}\">{'' if row.get('week_number') is None else row['week_number']}</td>",
+            f"<td style=\"{row_cell_style}\">{row['slot_in_week']}</td>",
         ]
 
         for section in section_columns:
             section_id = section["id"]
             date_value = row["dates"].get(section_id)
             if date_value:
-                label = date_value
-                exams = exam_lookup.get((section_id, date_value), [])
-                badges = " ".join(
-                    f'<span class="exam-badge">{html.escape(exam)}</span>'
-                    for exam in exams
+                cells.append(
+                    f"<td style=\"{row_cell_style}\">{html.escape(date_value)}</td>"
                 )
-                cells.append(f"<td>{html.escape(label)} {badges}</td>")
             else:
-                cells.append('<td class="muted">No class</td>')
+                cells.append(
+                    f'<td class="muted" style="{row_cell_style}">No class</td>'
+                )
 
-        rows_html.append("<tr>" + "".join(cells) + "</tr>")
+        cells.extend(
+            [
+                f"<td style=\"{topic_cell_style}\">{topic_title if topic_title else '&nbsp;'}{coverage_html}</td>",
+                f"<td style=\"{row_cell_style}\">{readings_html}</td>",
+                f"<td style=\"{row_cell_style}\">{slides_html}</td>",
+            ]
+        )
+        if show_other_resources:
+            cells.append(f"<td style=\"{row_cell_style}\">{extra_html}</td>")
+
+        rows_html.append(
+            f'<tr class="{" ".join(row_classes)}">' + "".join(cells) + "</tr>"
+        )
 
     section_headers = "".join(
-        f"<th>{html.escape(section['name'])}</th>" for section in section_columns
+        f"<th style=\"{header_style}\">{html.escape(section['name'])}</th>"
+        for section in section_columns
+    )
+    other_resources_header = (
+        f"<th style=\"{header_style}\">Other Resources</th>"
+        if show_other_resources
+        else ""
     )
 
     return f"""<!-- course-plan-generated:start -->
 <style>
-.course-calendar {{ font-family: Arial, sans-serif; font-size: 14px; }}
-.course-calendar table {{ border-collapse: collapse; width: 100%; }}
-.course-calendar th, .course-calendar td {{ border: 1px solid #ccc; padding: 8px; vertical-align: top; }}
-.course-calendar th {{ background: #f5f5f5; }}
+.course-calendar {{
+  --line: #cfd6dd;
+  --past-bg: #f7f8fa;
+  --current-bg: #e8f3ff;
+  --upcoming-bg: #ffffff;
+  --no-class-bg: #e6f7ea;
+  --exam-bg: #ffe6c9;
+  --accent: #2b6cb0;
+  font-family: Arial, sans-serif;
+  font-size: 14px;
+}}
+.course-calendar table {{ border-collapse: collapse; width: 100%; border: 1px solid var(--line); }}
 .course-calendar .muted {{ color: #777; }}
+.course-calendar .past-row td {{ background: var(--past-bg); }}
+.course-calendar .current-row td {{ background: var(--current-bg); }}
+.course-calendar .upcoming-row td {{ background: var(--upcoming-bg); }}
+.course-calendar .no-class-row td {{
+  background: var(--no-class-bg);
+  border-top: 2px solid #91c49b !important;
+  border-bottom: 2px solid #91c49b !important;
+}}
+.course-calendar .no-class-notice-row td {{
+  background: #d9f0df;
+  border-top: 3px solid #70a978 !important;
+  border-bottom: 3px solid #70a978 !important;
+  text-align: center;
+}}
+.course-calendar .exam-row td {{
+  background: var(--exam-bg);
+  border-top: 3px solid var(--accent) !important;
+  border-bottom: 3px solid var(--accent) !important;
+}}
 .course-calendar .exam-badge {{
   display: inline-block;
   margin-left: 6px;
@@ -929,13 +1222,13 @@ def render_calendar_html(
   <table>
     <thead>
       <tr>
-        <th>Week</th>
-        <th>Slot</th>
-        <th>Topic</th>
-        <th>Readings</th>
-        <th>Slides</th>
-        <th>Other Resources</th>
+        <th style="{header_style}">Week</th>
+        <th style="{header_style}">Slot</th>
         {section_headers}
+        <th style="{header_style}">Topic</th>
+        <th style="{header_style}">Readings</th>
+        <th style="{header_style}">Slides</th>
+        {other_resources_header}
       </tr>
     </thead>
     <tbody>
