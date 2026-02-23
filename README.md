@@ -61,6 +61,71 @@ Recommended rollout:
 3. Run course-wide with `--dry-run`.
 4. Run course-wide live.
 
+## Course Plan Helper
+
+Generate a student-facing calendar (HTML + JSON) from a course plan YAML and
+optionally publish it to Canvas as a page.
+
+Dry-run / local generation only:
+
+```bash
+lms-interface-helper plan-course --yaml-path course_plans/cst334_compact.yaml --output-dir build/cst334
+```
+
+Publish to Canvas:
+
+```bash
+lms-interface-helper plan-course --yaml-path course_plans/cst334_compact.yaml --course-id <COURSE_ID> --publish
+```
+
+Useful flags:
+
+- `--dry-run`: show Canvas actions without writing when `--publish` is used
+- `--page-title`: override published page title
+- `--module-name`: module to place schedule page link in (default: `Course Schedule`)
+- `--publish-weekly-slides`: create/reuse `Week XX` modules and add slide URL links
+- `--weekly-module-template`: override week module naming (default from plan: `Week {week_number}`)
+
+Plan hint:
+
+- Set `sync.topics_per_meeting: 2` (or higher) when a single class session covers multiple topic blocks.
+- Set `duration_hours` on a topic when it needs extra in-class time (for example `duration_hours: 3`).
+- Use reusable placeholders to insert spacer blocks without redefining `tbd-*` topics each term.
+- Define `resource_defaults.lecture_slides_base_url` to avoid repeating full slide URLs in each topic.
+
+Example:
+
+```yaml
+resource_defaults:
+  lecture_slides_base_url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs
+
+topics:
+  - id: process-scheduling-os7
+    lecture_slides:
+      - OSTEP 07.pdf
+```
+
+Reusable placeholder example:
+
+```yaml
+placeholders:
+  tbd:
+    title: Buffer / TBD
+    new_material: false
+
+topics:
+  - id: mlfq
+    duration_hours: 3
+  - placeholder: tbd
+    duration_hours: 1
+```
+
+Validate a plan file against the schema:
+
+```bash
+python scripts/validate_course_plan.py course_plans/cst334_compact.yaml
+```
+
 ## Parallel Uploads
 
 Question uploads support multi-threading to speed up large quizzes. The default

@@ -1,0 +1,377 @@
+version: '1.1'
+term:
+  start_date: '2026-01-19'
+  end_date: '2026-05-07'
+  timezone: America/Los_Angeles
+  global_no_class_dates:
+  - '2026-01-21'
+  - '2026-01-22'
+  - '2026-03-30'
+  - '2026-03-31'
+  breaks:
+  - name: Break week 11
+    kind: break
+    start_date: '2026-03-30'
+    end_date: '2026-04-02'
+sections:
+- id: sec_mw
+  name: Mon/Wed
+  meeting_days:
+  - Mon
+  - Wed
+- id: sec_tth
+  name: Tue/Thu
+  meeting_days:
+  - Tue
+  - Thu
+sync:
+  mode: lockstep_by_topic
+  skip_for_all_if_any_section_skips: true
+  carry_over_policy: defer_topic
+  topics_per_meeting: 2
+  
+topics:
+
+## Exam 1 ##
+- id: course-intro
+  title: Course Intro
+  lecture_slides:
+  - 01a - introduction.pdf
+- id: os-intro
+  title: OS Intro (OS 2)
+  lecture_slides:
+  - 01a - introduction.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/intro.pdf
+- id: c-programming-1
+  title: C programming 1
+  duration_hours: 2
+  lecture_slides:
+  - 02a-c.pdf
+- id: computer-architecture
+  title: computer architecture
+  lecture_slides:
+  - 03a-6comp-arch.pdf
+- id: linux-and-shell
+  title: Linux and shell
+  lecture_slides:
+  - 03b-7linux-and-shell.pdf
+- id: processes
+  title: processes (OS 4)
+  lecture_slides:
+  - OSTEP 04  - processes.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/cpu-intro.pdf
+- id: c-process-api
+  title: C process API (OS 5)
+  lecture_slides:
+  - OSTEP 05 - C-process-api.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/cpu-api.pdf
+- id: limited-direct-execution
+  title: limited direct execution (OS 6)
+  lecture_slides:
+  - OSTEP 06 - limited-direct-execution.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/cpu-mechanisms.pdf
+- id: process-scheduling
+  title: process scheduling (OS 7)
+  duration_hours: 2
+  lecture_slides:
+  - OSTEP 07 - process-scheduling.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/cpu-sched.pdf
+- id: multi-level-feedback-queue
+  title: multi-level feedback queue (OS 8)
+  duration_hours: 2
+  lecture_slides:
+  - OSTEP 08 - multi-level-feedback-queue.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/cpu-sched-mlfq.pdf
+- placeholder: tbd
+
+## Exam 2 ##
+- id: address-spaces
+  title: address spaces (OS 13)
+  lecture_slides:
+  - OSTEP 13 - address-spaces.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/vm-intro.pdf
+- id: c-memory-api
+  title: C memory API (OS 14)
+  lecture_slides:
+  - OSTEP 14 - C-memory-api.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/vm-api.pdf
+- id: address-translation
+  title: address translation (OS 15)
+  lecture_slides:
+  - OSTEP 15 - 18-address-translation.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/vm-mechanism.pdf
+- id: segmentation
+  title: segmentation (OS 16)
+  lecture_slides:
+  - OSTEP 16 - 19-segmentation.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/vm-segmentation.pdf
+- id: paging
+  title: paging (OS 18)
+  lecture_slides:
+  - OSTEP 18 - 20-paging.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/vm-paging.pdf
+- id: translation-lookaside-buffers
+  title: translation-lookaside buffers (OS 19)
+  lecture_slides:
+  - OSTEP 19 - 21-trans-lookaside-buffer.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/vm-tlbs.pdf
+- id: page-directories
+  title: page directories (OS 20)
+  lecture_slides:
+  - OSTEP 20 - 22-multi-level-paging.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/vm-smalltables.pdf
+- id: swapping-mechanisms
+  title: 'swapping: mechanisms (OS 21)'
+  lecture_slides:
+  - OSTEP 21-22 - 23-swapping.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/vm-beyondphys.pdf
+- id: swapping-policies
+  title: 'swapping: policies (OS 22)'
+  lecture_slides:
+  - OSTEP 21-22 - 23-swapping.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/vm-beyondphys-policy.pdf
+- id: free-space-mgmt
+  title: free-space mgmt (OS 17)
+  lecture_slides:
+  - OSTEP 17 - 17-free-space-mgmt.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/vm-freespace.pdf
+  
+  
+- id: threads
+  title: threads (OS 26)
+  lecture_slides:
+  - OSTEP 26 - concurrency-and-threads.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/threads-intro.pdf
+- id: c-threads-api
+  title: C threads API (OS 27)
+  lecture_slides:
+  - OSTEP 27 - 36 - threads-api.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/threads-api.pdf
+- id: locks
+  title: locks (OS 28)
+  lecture_slides:
+  - OSTEP 28 - 37 - locks.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/threads-locks.pdf
+- id: locked-data-structures
+  title: locked data structures (OS 29)
+  lecture_slides:
+  - OSTEP 29 - 38 - lock-based-data-structures.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/threads-locks-usage.pdf
+- id: condition-variables
+  title: condition variables (OS 30)
+  lecture_slides:
+  - OSTEP 30 - 39 - condition-variables.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/threads-cv.pdf
+- id: semaphores
+  title: Semaphores (OS 31)
+  lecture_slides:
+  - OSTEP 31 - 41 - semaphores.pdf
+  - OSTEP 31a - sync-barrier-part1.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/threads-sema.pdf
+- id: anderson-dahlin
+  title: Anderson/Dahlin
+  duration_hours: 2
+  lecture_slides:
+  - Anderson Dahlin.pdf
+  
+- id: i-o-devices
+  title: I/O devices (OS 36)
+  lecture_slides:
+  - OSTEP 36 - 24-io-devices.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/file-devices.pdf
+- id: hard-disk-drives
+  title: hard disk drives (OS 37)
+  lecture_slides:
+  - OSTEP 37.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/file-disks.pdf
+- id: files-and-directories
+  title: files and directories (OS 39)
+  lecture_slides:
+  - OSTEP 39 - 25 - files-and-directories.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/file-intro.pdf
+  
+- id: file-system-implementation-i
+  title: file system implementation I (OS 40)
+  lecture_slides:
+  - OSTEP 40a - 26file-systems-impl-data.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/file-implementation.pdf
+- id: file-system-implementation-ii
+  title: file system implementation II (OS 40)
+  lecture_slides:
+  - OSTEP 40b - 27-file-systems-impl-access.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/file-implementation.pdf
+  
+  
+  
+- id: languages-bnf-grammars
+  title: 'Languages: BNF grammars'
+  lecture_slides:
+  - languages - 1 - BNF.pdf
+- id: languages-lexical-analysis
+  title: 'Languages: lexical analysis'
+  lecture_slides:
+  - languages - 2 - lexical-analysis.pdf
+- id: languages-predictive-parsing
+  title: 'Languages: predictive parsing'
+  lecture_slides:
+  - languages - 3 - predictive-parsing-1.pdf
+  - languages - 4 - predictive-parsing-2.pdf
+- id: languages-compilers-and-interpreters
+  title: 'Languages: compilers and interpreters'
+  lecture_slides:
+  - languages - 5 - compilers-and-interpreters.pdf
+  
+- id: intro-to-security
+  title: Intro to Security (OS 53)
+  lecture_slides:
+  - OSTEP 53 - Security Intro.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/security-intro.pdf
+- id: authentication
+  title: Authentication (OS 54)
+  lecture_slides:
+  - OSTEP 54 - authentication.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/security-authentication.pdf
+- id: access-control
+  title: Access Control (OS 55)
+  lecture_slides:
+  - OSTEP 55.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/security-access.pdf
+- id: cryptography
+  title: Cryptography (OS 56)
+  lecture_slides:
+  - OSTEP 56 - cryptography.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/security-crypto.pdf
+- id: distributed-systems
+  title: Distributed Systems (OS 48)
+  lecture_slides:
+  - OSTEP 48.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/dist-intro.pdf
+- id: distributed-security
+  title: Distributed Security (OS 57)
+  lecture_slides:
+  - OSTEP 57.pdf
+  readings:
+  - https://pages.cs.wisc.edu/~remzi/OSTEP/security-distributed.pdf
+
+- placeholder: tbd
+- placeholder: tbd
+- placeholder: tbd
+- placeholder: tbd
+
+exam_rules:
+  schedule_mode: mixed
+  defaults:
+    class_meeting_index_in_week: 2
+    min_class_meetings_after_last_new_material: 1
+    prefer_before_break: true
+    require_before_break: false
+  groups:
+  - name: Exam 1
+    through_topic: bash-2
+    fixed_date_overrides:
+      sec_mw: '2026-02-18'
+      sec_tth: '2026-02-19'
+  - name: Exam 2
+    through_topic: swapping-policies
+    fixed_date_overrides:
+      sec_mw: '2026-03-18'
+      sec_tth: '2026-03-19'
+  - name: Exam 3
+    through_topic: files-and-directories
+    fixed_date_overrides:
+      sec_mw: '2026-04-15'
+      sec_tth: '2026-04-16'
+  - name: Exam 4
+    through_topic: tbd-4
+publishing:
+  module_name_template: Week {week_number}
+  schedule_page_title: CST334 Schedule
+  create_calendar_html: true
+exam_coverage:
+  Exam 1:
+  - course-intro
+  - os-intro
+  - c-programming-1
+  - c-programming-2
+  - computer-architecture
+  - linux-and-shell
+  - processes
+  - c-process-api
+  - limited-direct-execution
+  - process-scheduling
+  - multi-level-feedback-queue
+  Exam 2:
+  - address-spaces
+  - c-memory-api
+  - free-space-mgmt
+  - address-translation
+  - segmentation
+  - paging
+  - translation-lookaside-buffers
+  - page-directories
+  - swapping-mechanisms
+  - swapping-policies
+  Exam 3:
+  - threads
+  - c-threads-api
+  - locks
+  - locked-data-structures
+  - condition-variables
+  - semaphores
+  - anderson-dahlin
+  - i-o-devices
+  - hard-disk-drives
+  - files-and-directories
+  Exam 4:
+  - file-system-implementation-i
+  - file-system-implementation-ii
+  - languages-bnf-grammars
+  - languages-lexical-analysis
+  - languages-predictive-parsing
+  - languages-compilers-and-interpreters
+  - tbd-2
+  - tbd-3
+  - intro-to-security
+  - authentication
+  - access-control
+  - cryptography
+  - distributed-systems
+  - distributed-security
+resource_defaults:
+  lecture_slides_base_url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs
+placeholders:
+  tbd:
+    title: TBD
+    new_material: false
