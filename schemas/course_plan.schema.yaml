@@ -1,0 +1,404 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://example.org/schemas/course_plan.schema.yaml"
+title: "Course Plan Schema"
+description: "Declarative plan for generating Canvas schedules, modules, and exam placement."
+type: object
+additionalProperties: false
+required:
+  - version
+  - term
+  - sections
+  - topics
+properties:
+  version:
+    type: string
+    enum: ["1.0", "1.1"]
+  term:
+    $ref: "#/$defs/term"
+  sections:
+    type: array
+    minItems: 1
+    items:
+      $ref: "#/$defs/section"
+  sync:
+    $ref: "#/$defs/sync"
+  topics:
+    type: array
+    minItems: 1
+    items:
+      $ref: "#/$defs/topic"
+  placeholders:
+    $ref: "#/$defs/placeholders"
+  exam_rules:
+    $ref: "#/$defs/examRules"
+  exam_coverage:
+    $ref: "#/$defs/examCoverage"
+  resource_defaults:
+    $ref: "#/$defs/resourceDefaults"
+  publishing:
+    $ref: "#/$defs/publishing"
+
+$defs:
+  date:
+    type: string
+    format: date
+
+  dayOfWeek:
+    type: string
+    enum: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+  sectionId:
+    type: string
+    pattern: "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+
+  term:
+    type: object
+    additionalProperties: false
+    required:
+      - start_date
+      - end_date
+      - timezone
+    properties:
+      start_date:
+        $ref: "#/$defs/date"
+      end_date:
+        $ref: "#/$defs/date"
+      timezone:
+        type: string
+        minLength: 1
+      global_no_class_dates:
+        type: array
+        uniqueItems: true
+        items:
+          $ref: "#/$defs/date"
+      breaks:
+        type: array
+        items:
+          $ref: "#/$defs/breakPeriod"
+
+  breakPeriod:
+    type: object
+    additionalProperties: false
+    required:
+      - name
+      - start_date
+      - end_date
+    properties:
+      name:
+        type: string
+        minLength: 1
+      start_date:
+        $ref: "#/$defs/date"
+      end_date:
+        $ref: "#/$defs/date"
+      kind:
+        type: string
+        enum: ["break", "holiday", "reading_week", "custom"]
+      applies_to:
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items:
+          $ref: "#/$defs/sectionId"
+      notes:
+        type: string
+
+  section:
+    type: object
+    additionalProperties: false
+    required:
+      - id
+      - meeting_days
+    properties:
+      id:
+        $ref: "#/$defs/sectionId"
+      name:
+        type: string
+      canvas_course_id:
+        oneOf:
+          - type: integer
+          - type: string
+            pattern: "^[0-9]+$"
+      meeting_days:
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items:
+          $ref: "#/$defs/dayOfWeek"
+      meeting_time:
+        type: object
+        additionalProperties: false
+        required: [start, end]
+        properties:
+          start:
+            type: string
+            format: time
+          end:
+            type: string
+            format: time
+
+  sync:
+    type: object
+    additionalProperties: false
+    properties:
+      mode:
+        type: string
+        enum: ["lockstep_by_topic", "independent"]
+        default: "lockstep_by_topic"
+      skip_for_all_if_any_section_skips:
+        type: boolean
+        default: true
+      carry_over_policy:
+        type: string
+        enum: ["defer_topic", "compress_future"]
+        default: "defer_topic"
+      topics_per_meeting:
+        type: integer
+        minimum: 1
+        default: 1
+      hours_per_meeting:
+        type: integer
+        minimum: 1
+
+  topic:
+    type: object
+    additionalProperties: false
+    properties:
+      id:
+        type: string
+        minLength: 1
+      placeholder:
+        type: string
+        minLength: 1
+      title:
+        type: string
+        minLength: 1
+      meetings:
+        type: integer
+        minimum: 1
+        default: 1
+      duration_hours:
+        type: integer
+        minimum: 1
+      hours:
+        type: integer
+        minimum: 1
+      new_material:
+        type: boolean
+        default: true
+      readings:
+        type: array
+        items:
+          $ref: "#/$defs/resource"
+      lecture_slides:
+        type: array
+        items:
+          $ref: "#/$defs/resource"
+      resources:
+        type: array
+        items:
+          $ref: "#/$defs/resource"
+      appears_on:
+        type: array
+        items:
+          type: string
+      notes:
+        type: string
+      tags:
+        type: array
+        items:
+          type: string
+      prerequisite_topic_ids:
+        type: array
+        items:
+          type: string
+    anyOf:
+      - required: [id]
+      - required: [title]
+      - required: [placeholder]
+
+  placeholders:
+    type: object
+    additionalProperties:
+      $ref: "#/$defs/placeholderTemplate"
+
+  placeholderTemplate:
+    type: object
+    additionalProperties: false
+    properties:
+      title:
+        type: string
+      duration_hours:
+        type: integer
+        minimum: 1
+      hours:
+        type: integer
+        minimum: 1
+      new_material:
+        type: boolean
+      readings:
+        type: array
+        items:
+          $ref: "#/$defs/resource"
+      lecture_slides:
+        type: array
+        items:
+          $ref: "#/$defs/resource"
+      resources:
+        type: array
+        items:
+          $ref: "#/$defs/resource"
+      notes:
+        type: string
+      tags:
+        type: array
+        items:
+          type: string
+
+  examCoverage:
+    type: object
+    additionalProperties:
+      type: array
+      minItems: 1
+      items:
+        type: string
+
+  resourceDefaults:
+    type: object
+    additionalProperties: false
+    properties:
+      lecture_slides_base_url:
+        type: string
+        format: uri
+      readings_base_url:
+        type: string
+        format: uri
+      resources_base_url:
+        type: string
+        format: uri
+
+  resource:
+    oneOf:
+      - type: string
+        format: uri-reference
+      - type: object
+        additionalProperties: false
+        required:
+          - url
+        properties:
+          title:
+            type: string
+          type:
+            type: string
+            enum: ["reading", "lecture", "video", "worksheet", "external", "other"]
+          required:
+            type: boolean
+            default: true
+          url:
+            type: string
+            format: uri-reference
+
+  examRules:
+    type: object
+    additionalProperties: false
+    properties:
+      schedule_mode:
+        type: string
+        enum: ["derived", "fixed", "mixed"]
+        default: "derived"
+      defaults:
+        type: object
+        additionalProperties: false
+        properties:
+          class_meeting_index_in_week:
+            type: integer
+            minimum: 1
+            maximum: 7
+            default: 2
+          min_class_meetings_after_last_new_material:
+            type: integer
+            minimum: 0
+            default: 1
+          prefer_before_break:
+            type: boolean
+            default: true
+          require_before_break:
+            type: boolean
+            default: false
+      groups:
+        type: array
+        minItems: 1
+        items:
+          $ref: "#/$defs/examGroup"
+
+  examGroup:
+    type: object
+    additionalProperties: false
+    required:
+      - name
+    properties:
+      name:
+        type: string
+        minLength: 1
+      through_topic:
+        type: string
+      included_topics:
+        type: array
+        minItems: 1
+        items:
+          type: string
+      class_meeting_index_in_week:
+        type: integer
+        minimum: 1
+        maximum: 7
+      min_class_meetings_after_last_new_material:
+        type: integer
+        minimum: 0
+      prefer_before_break:
+        type: boolean
+      require_before_break:
+        type: boolean
+      fixed_date_overrides:
+        type: object
+        patternProperties:
+          "^[a-zA-Z0-9][a-zA-Z0-9_-]*$":
+            $ref: "#/$defs/date"
+        additionalProperties: false
+      duration_minutes:
+        type: integer
+        minimum: 1
+      notes:
+        type: string
+    anyOf:
+      - required: [through_topic]
+      - required: [included_topics]
+      - required: [fixed_date_overrides]
+
+  publishing:
+    type: object
+    additionalProperties: false
+    properties:
+      module_name_template:
+        type: string
+        default: "Week {week_number}"
+      schedule_page_title:
+        type: string
+        default: "Course Schedule"
+      create_calendar_html:
+        type: boolean
+        default: true
+      weekly_slides_title_prefix:
+        type: string
+        default: "Slides: "
+      weekly_slides_indent:
+        type: integer
+        minimum: 0
+        default: 1
+      weekly_slides_section_header:
+        oneOf:
+          - type: string
+          - type: "null"
+        default: "Slides"
+      weekly_slides_prune_existing:
+        type: boolean
+        default: true

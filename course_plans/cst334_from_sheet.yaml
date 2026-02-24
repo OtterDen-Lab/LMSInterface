@@ -1,0 +1,646 @@
+version: '1.0'
+term:
+  start_date: '2026-01-19'
+  end_date: '2026-05-07'
+  timezone: America/Los_Angeles
+  global_no_class_dates:
+  - '2026-01-21'
+  - '2026-01-22'
+  - '2026-03-30'
+  - '2026-03-31'
+  breaks:
+  - name: Break week 11
+    kind: break
+    start_date: '2026-03-30'
+    end_date: '2026-04-02'
+sections:
+- id: sec_mw
+  name: Mon/Wed
+  meeting_days:
+  - Mon
+  - Wed
+- id: sec_tth
+  name: Tue/Thu
+  meeting_days:
+  - Tue
+  - Thu
+sync:
+  mode: lockstep_by_topic
+  skip_for_all_if_any_section_skips: true
+  carry_over_policy: defer_topic
+  topics_per_meeting: 2
+topics:
+- id: course-intro
+  title: Course Intro
+  lecture_slides:
+  - title: 'TODO: add slide link'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs
+  appears_on:
+  - Exam 1
+- id: os-intro
+  title: OS Intro (OS 2)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 02.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2002.pdf
+  readings:
+  - title: 'OSTEP chapter 2 (source label: OS 2)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 1
+- id: c-programming-1
+  title: C programming 1
+  lecture_slides:
+  - title: 'TODO: add slide link'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs
+  appears_on:
+  - Exam 1
+- id: c-programming-2
+  title: C programming 2
+  lecture_slides:
+  - title: 'TODO: add slide link'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs
+  appears_on:
+  - Exam 1
+- id: computer-architecture
+  title: computer architecture
+  lecture_slides:
+  - title: 'TODO: add slide link'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs
+  appears_on:
+  - Exam 1
+- id: linux-and-shell
+  title: Linux and shell
+  lecture_slides:
+  - title: 'TODO: add slide link'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs
+  appears_on:
+  - Exam 1
+- id: processes
+  title: processes (OS 4)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 04.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2004.pdf
+  readings:
+  - title: 'OSTEP chapter 4 (source label: OS 4)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 1
+- id: c-process-api
+  title: C process API (OS 5)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 05.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2005.pdf
+  readings:
+  - title: 'OSTEP chapter 5 (source label: OS 5)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 1
+- id: limited-direct-execution
+  title: limited direct execution (OS 6)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 06.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2006.pdf
+  readings:
+  - title: 'OSTEP chapter 6 (source label: OS 6)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 1
+- id: process-scheduling
+  title: process scheduling (OS 7)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 07.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2007.pdf
+  readings:
+  - title: 'OSTEP chapter 7 (source label: OS 7)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 1
+- id: multi-level-feedback-queue
+  title: multi-level feedback queue (OS 8)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 08.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2008.pdf
+  readings:
+  - title: 'OSTEP chapter 8 (source label: OS 8)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 1
+- id: tbd
+  title: TBD
+  lecture_slides:
+  - title: 'TODO: add slide link'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs
+  new_material: false
+  tags:
+  - tbd
+  appears_on:
+  - Exam 1
+- id: bash
+  title: bash
+  lecture_slides:
+  - title: 'TODO: add slide link'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs
+  appears_on:
+  - Exam 1
+- id: bash-2
+  title: bash
+  lecture_slides:
+  - title: 'TODO: add slide link'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs
+  appears_on:
+  - Exam 1
+- id: address-spaces
+  title: address spaces (OS 13)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 13.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2013.pdf
+  readings:
+  - title: 'OSTEP chapter 13 (source label: OS 13)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 2
+- id: c-memory-api
+  title: C memory API (OS 14)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 14.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2014.pdf
+  readings:
+  - title: 'OSTEP chapter 14 (source label: OS 14)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 2
+- id: free-space-mgmt
+  title: free-space mgmt (OS 17)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 17.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2017.pdf
+  readings:
+  - title: 'OSTEP chapter 17 (source label: OS 17)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 2
+- id: address-translation
+  title: address translation (OS 15)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 15.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2015.pdf
+  readings:
+  - title: 'OSTEP chapter 15 (source label: OS 15)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 2
+- id: segmentation
+  title: segmentation (OS 16)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 16.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2016.pdf
+  readings:
+  - title: 'OSTEP chapter 16 (source label: OS 16)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 2
+- id: paging
+  title: paging (OS 18)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 18.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2018.pdf
+  readings:
+  - title: 'OSTEP chapter 18 (source label: OS 18)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 2
+- id: translation-lookaside-buffers
+  title: translation-lookaside buffers (OS 19)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 19.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2019.pdf
+  readings:
+  - title: 'OSTEP chapter 19 (source label: OS 19)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 2
+- id: page-directories
+  title: page directories (OS 20)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 20.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2020.pdf
+  readings:
+  - title: 'OSTEP chapter 20 (source label: OS 20)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 2
+- id: swapping-mechanisms
+  title: 'swapping: mechanisms (OS 21)'
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 21.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2021.pdf
+  readings:
+  - title: 'OSTEP chapter 21 (source label: OS 21)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 2
+- id: swapping-policies
+  title: 'swapping: policies (OS 22)'
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 22.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2022.pdf
+  readings:
+  - title: 'OSTEP chapter 22 (source label: OS 22)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 2
+- id: threads
+  title: threads (OS 26)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 26.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2026.pdf
+  readings:
+  - title: 'OSTEP chapter 26 (source label: OS 26)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 3
+- id: c-threads-api
+  title: C threads API (OS 27)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 27.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2027.pdf
+  readings:
+  - title: 'OSTEP chapter 27 (source label: OS 27)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 3
+- id: locks
+  title: locks (OS 28)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 28.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2028.pdf
+  readings:
+  - title: 'OSTEP chapter 28 (source label: OS 28)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 3
+- id: locked-data-structures
+  title: locked data structures (OS 29)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 29.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2029.pdf
+  readings:
+  - title: 'OSTEP chapter 29 (source label: OS 29)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 3
+- id: condition-variables
+  title: condition variables (OS 30)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 30.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2030.pdf
+  readings:
+  - title: 'OSTEP chapter 30 (source label: OS 30)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 3
+- id: semaphores
+  title: Semaphores (OS 31)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 31.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2031.pdf
+  readings:
+  - title: 'OSTEP chapter 31 (source label: OS 31)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 3
+- id: anderson-dahlin
+  title: Anderson/Dahlin
+  lecture_slides:
+  - title: 'TODO: add slide link'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs
+  appears_on:
+  - Exam 3
+- id: i-o-devices
+  title: I/O devices (OS 36)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 36.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2036.pdf
+  readings:
+  - title: 'OSTEP chapter 36 (source label: OS 36)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 3
+- id: hard-disk-drives
+  title: hard disk drives (OS 37)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 37.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2037.pdf
+  readings:
+  - title: 'OSTEP chapter 37 (source label: OS 37)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 3
+- id: files-and-directories
+  title: files and directories (OS 39)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 39.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2039.pdf
+  readings:
+  - title: 'OSTEP chapter 39 (source label: OS 39)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 3
+- id: file-system-implementation-i
+  title: file system implementation I (OS 40)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 40.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2040.pdf
+  readings:
+  - title: 'OSTEP chapter 40 (source label: OS 40)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 4
+- id: file-system-implementation-ii
+  title: file system implementation II (OS 40)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 40.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2040.pdf
+  readings:
+  - title: 'OSTEP chapter 40 (source label: OS 40)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 4
+- id: languages-bnf-grammars
+  title: 'Languages: BNF grammars'
+  lecture_slides:
+  - title: 'TODO: add slide link'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs
+  appears_on:
+  - Exam 4
+- id: languages-lexical-analysis
+  title: 'Languages: lexical analysis'
+  lecture_slides:
+  - title: 'TODO: add slide link'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs
+  appears_on:
+  - Exam 4
+- id: languages-predictive-parsing
+  title: 'Languages: predictive parsing'
+  lecture_slides:
+  - title: 'TODO: add slide link'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs
+  appears_on:
+  - Exam 4
+- id: languages-compilers-and-interpreters
+  title: 'Languages: compilers and interpreters'
+  lecture_slides:
+  - title: 'TODO: add slide link'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs
+  appears_on:
+  - Exam 4
+- id: tbd-2
+  title: TBD
+  lecture_slides:
+  - title: 'TODO: add slide link'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs
+  new_material: false
+  tags:
+  - tbd
+  appears_on:
+  - Exam 4
+- id: tbd-3
+  title: TBD
+  lecture_slides:
+  - title: 'TODO: add slide link'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs
+  new_material: false
+  tags:
+  - tbd
+  appears_on:
+  - Exam 4
+- id: intro-to-security
+  title: Intro to Security (OS 53)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 53.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2053.pdf
+  readings:
+  - title: 'OSTEP chapter 53 (source label: OS 53)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 4
+- id: authentication
+  title: Authentication (OS 54)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 54.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2054.pdf
+  readings:
+  - title: 'OSTEP chapter 54 (source label: OS 54)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 4
+- id: access-control
+  title: Access Control (OS 55)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 55.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2055.pdf
+  readings:
+  - title: 'OSTEP chapter 55 (source label: OS 55)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 4
+- id: cryptography
+  title: Cryptography (OS 56)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 56.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2056.pdf
+  readings:
+  - title: 'OSTEP chapter 56 (source label: OS 56)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 4
+- id: distributed-systems
+  title: Distributed Systems (OS 48)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 48.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2048.pdf
+  readings:
+  - title: 'OSTEP chapter 48 (source label: OS 48)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 4
+- id: distributed-security
+  title: Distributed Security (OS 57)
+  lecture_slides:
+  - title: 'Placeholder slide: OSTEP 57.pdf'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs/OSTEP%2057.pdf
+  readings:
+  - title: 'OSTEP chapter 57 (source label: OS 57)'
+    type: reading
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  appears_on:
+  - Exam 4
+- id: tbd-4
+  title: TBD
+  lecture_slides:
+  - title: 'TODO: add slide link'
+    type: lecture
+    required: false
+    url: https://github.com/CSUMB-SCD-instructors/CST334/tree/main/slides/pdfs
+  new_material: false
+  tags:
+  - tbd
+  appears_on:
+  - Exam 4
+exam_rules:
+  schedule_mode: mixed
+  defaults:
+    class_meeting_index_in_week: 2
+    min_class_meetings_after_last_new_material: 1
+    prefer_before_break: true
+    require_before_break: false
+  groups:
+  - name: Exam 1
+    through_topic: bash-2
+    fixed_date_overrides:
+      sec_mw: '2026-02-18'
+      sec_tth: '2026-02-19'
+  - name: Exam 2
+    through_topic: swapping-policies
+    fixed_date_overrides:
+      sec_mw: '2026-03-18'
+      sec_tth: '2026-03-19'
+  - name: Exam 3
+    through_topic: files-and-directories
+    fixed_date_overrides:
+      sec_mw: '2026-04-15'
+      sec_tth: '2026-04-16'
+  - name: Exam 4
+    through_topic: tbd-4
+publishing:
+  module_name_template: Week {week_number}
+  schedule_page_title: CST334 Schedule
+  create_calendar_html: true

@@ -7,7 +7,7 @@ packages = ["lms_interface"]
 
 [project]
 name = "lms-interface"
-version = "0.4.3"
+version = "0.4.4"
 description = "LMS interface library for teaching tools"
 authors = [
     {name = "Sam Ogden", email = "samuel.s.ogden@gmail.com"},
@@ -17,6 +17,7 @@ dependencies = [
     "canvasapi==3.2.0",
     "requests==2.32.2",
     "python-dotenv==1.0.1",
+    "PyYAML==6.0.3",
     "pytest>=8.4.2",
 ]
 
@@ -30,6 +31,7 @@ dev = [
     "flake8",
     "mypy",
     "ruff",
+    "jsonschema",
 ]
 
 [tool.black]
