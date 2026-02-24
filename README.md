@@ -196,6 +196,12 @@ Flow:
 2. Create and push a matching tag (`v<version>`), such as `v0.4.5`.
 3. GitHub Actions builds `dist/*` and attaches artifacts to that release.
 
+One-command option:
+
+```bash
+git bump patch --tag --push
+```
+
 Tag/version contract:
 
 - Tag `vX.Y.Z` must match `project.version = "X.Y.Z"` in `pyproject.toml`.
