@@ -185,3 +185,26 @@ Use the shared script to vendor into another project:
 ```bash
 python scripts/vendor_into_project.py /path/to/target --top-level
 ```
+
+## GitHub Release Artifacts
+
+This repo can publish wheel/sdist artifacts to GitHub Releases on tag pushes.
+
+Flow:
+
+1. Bump version in `pyproject.toml` (for example via `git bump patch`).
+2. Create and push a matching tag (`v<version>`), such as `v0.4.5`.
+3. GitHub Actions builds `dist/*` and attaches artifacts to that release.
+
+Tag/version contract:
+
+- Tag `vX.Y.Z` must match `project.version = "X.Y.Z"` in `pyproject.toml`.
+- The release workflow fails if they do not match.
+
+Downstream projects can pin to a release artifact instead of vendoring:
+
+```toml
+dependencies = [
+  "lms-interface @ https://github.com/<org>/LMSInterface/releases/download/v0.4.5/lms_interface-0.4.5-py3-none-any.whl",
+]
+```
