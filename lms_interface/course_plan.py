@@ -81,6 +81,13 @@ def _date_range(start: date, end: date) -> list[date]:
     return [start + timedelta(days=i) for i in range(days + 1)]
 
 
+def _weekday_to_int(value: str) -> int:
+    key = str(value or "").strip()[:3].title()
+    if key not in WEEKDAY_TO_INT:
+        raise ValueError(f"Invalid weekday value: {value!r}")
+    return WEEKDAY_TO_INT[key]
+
+
 def _slugify(value: str) -> str:
     s = value.strip().lower()
     s = re.sub(r"[^a-z0-9]+", "-", s)
@@ -436,6 +443,140 @@ def normalize_course_plan(raw_plan: dict[str, Any]) -> dict[str, Any]:
         "groups": list(exam_rules_raw.get("groups", [])),
     }
 
+    assignment_templates: list[dict[str, Any]] = []
+    for idx, assignment_raw in enumerate(plan.get("assignments", []) or [], start=1):
+        if not isinstance(assignment_raw, dict):
+            raise ValueError(
+                f"Each item in `assignments` must be a mapping/object, got: {assignment_raw!r}"
+            )
+        assignment_type = str(assignment_raw.get("type") or "").strip().lower()
+        if assignment_type not in {"weekly_study_notes", "programming_assignment"}:
+            raise ValueError(
+                "Assignment `type` must be one of: "
+                "`weekly_study_notes`, `programming_assignment`."
+            )
+
+        template_id = str(
+            assignment_raw.get("id") or f"{assignment_type}-{idx}"
+        ).strip()
+        contents_raw = assignment_raw.get("contents")
+        if isinstance(contents_raw, str):
+            markdown_value = contents_raw
+        elif isinstance(contents_raw, dict):
+            markdown_value = str(contents_raw.get("markdown") or "")
+        elif contents_raw is None:
+            markdown_value = str(assignment_raw.get("markdown") or "")
+        else:
+            raise ValueError(
+                f"Assignment '{template_id}' has invalid `contents`: {contents_raw!r}"
+            )
+
+        submission_types = list(
+            assignment_raw.get("submission_types") or ["online_text_entry"]
+        )
+        rules_raw = assignment_raw.get("rules") or {}
+        template: dict[str, Any] = {
+            "id": template_id,
+            "type": assignment_type,
+            "title": str(assignment_raw.get("title") or "").strip() or None,
+            "title_template": str(assignment_raw.get("title_template") or "").strip()
+            or None,
+            "assignment_group_name": str(
+                assignment_raw.get("assignment_group_name")
+                or (
+                    "Weekly Study Notes"
+                    if assignment_type == "weekly_study_notes"
+                    else "Programming Assignments"
+                )
+            ).strip(),
+            "points_possible": float(assignment_raw.get("points_possible", 1.0)),
+            "published": bool(assignment_raw.get("published", True)),
+            "submission_types": [str(value) for value in submission_types],
+            "contents": {"markdown": markdown_value},
+            "rules": {},
+        }
+
+        if assignment_type == "weekly_study_notes":
+            due_time = _parse_hhmm(str(rules_raw.get("due_time", "23:59")))
+            unlock_time = _parse_hhmm(str(rules_raw.get("unlock_time", "00:00")))
+            lock_time = _parse_hhmm(str(rules_raw.get("lock_time", due_time)))
+            template["rules"] = {
+                "include_exam_days": bool(rules_raw.get("include_exam_days", True)),
+                "include_exam_only_weeks": bool(
+                    rules_raw.get("include_exam_only_weeks", False)
+                ),
+                "unlock_time": unlock_time,
+                "due_anchor": str(
+                    rules_raw.get("due_anchor", "week_last_class")
+                ).strip(),
+                "due_days_after": int(rules_raw.get("due_days_after", 0)),
+                "due_time": due_time,
+                "lock_days_after_due": int(rules_raw.get("lock_days_after_due", 0)),
+                "lock_time": lock_time,
+            }
+        else:
+            instances: list[dict[str, Any]] = []
+            for inst_idx, instance_raw in enumerate(
+                list(rules_raw.get("instances") or []), start=1
+            ):
+                if not isinstance(instance_raw, dict):
+                    raise ValueError(
+                        f"Assignment '{template_id}' has invalid programming `instance`: {instance_raw!r}"
+                    )
+                release_raw = instance_raw.get("release") or {}
+                release_week = int(
+                    release_raw.get("week", instance_raw.get("release_week", 0))
+                )
+                if release_week <= 0:
+                    raise ValueError(
+                        f"Assignment '{template_id}' instance {inst_idx} requires release.week > 0."
+                    )
+                release_day = int(
+                    release_raw.get("day", instance_raw.get("release_day", 2))
+                )
+                release_time = _parse_hhmm(
+                    str(release_raw.get("time", instance_raw.get("release_time", "00:00")))
+                )
+
+                due_raw = instance_raw.get("due") or {}
+                due_strategy = str(due_raw.get("strategy", "recommended")).strip()
+                preferred_weekday_value = due_raw.get("preferred_weekday", "Sun")
+                preferred_weekday = _weekday_to_int(str(preferred_weekday_value))
+                instance = {
+                    "id": str(instance_raw.get("id") or f"{template_id}-{inst_idx}"),
+                    "title": str(instance_raw.get("title") or "").strip() or None,
+                    "release": {
+                        "week": release_week,
+                        "day": release_day,
+                        "time": release_time,
+                    },
+                    "due": {
+                        "strategy": due_strategy,
+                        "week": (
+                            int(due_raw["week"])
+                            if due_raw.get("week") is not None
+                            else None
+                        ),
+                        "day": (
+                            int(due_raw["day"])
+                            if due_raw.get("day") is not None
+                            else None
+                        ),
+                        "time": _parse_hhmm(str(due_raw.get("time", "23:59"))),
+                        "min_days_after_release": int(
+                            due_raw.get("min_days_after_release", 7)
+                        ),
+                        "preferred_weekday": preferred_weekday,
+                        "include_exam_days": bool(
+                            due_raw.get("include_exam_days", False)
+                        ),
+                    },
+                }
+                instances.append(instance)
+            template["rules"] = {"instances": instances}
+
+        assignment_templates.append(template)
+
     return {
         "version": str(plan.get("version", "1.1")),
         "term": {
@@ -453,6 +594,7 @@ def normalize_course_plan(raw_plan: dict[str, Any]) -> dict[str, Any]:
         "exam_coverage": exam_coverage,
         "resource_defaults": resource_defaults,
         "publishing": publishing,
+        "assignments": assignment_templates,
     }
 
 
@@ -2020,15 +2162,526 @@ def _publish_attendance_quizzes(
     return actions
 
 
+def _find_assignment_by_name(canvas_course: CanvasCourse, assignment_name: str):
+    for assignment in canvas_course.course.get_assignments(order_by="name"):
+        if str(getattr(assignment, "name", "")).strip() == assignment_name.strip():
+            return assignment
+    return None
+
+
+def _markdown_to_html(markdown_text: str) -> str:
+    try:
+        import markdown as markdown_module  # type: ignore
+    except Exception:
+        return _markdown_to_html_fallback(markdown_text)
+    return str(
+        markdown_module.markdown(
+            markdown_text,
+            extensions=["fenced_code", "tables", "nl2br"],
+        )
+    )
+
+
+def _markdown_to_html_fallback(markdown_text: str) -> str:
+    lines = markdown_text.splitlines()
+    html_parts: list[str] = []
+    paragraph_lines: list[str] = []
+    list_items: list[str] = []
+    in_code_block = False
+
+    def flush_paragraph() -> None:
+        nonlocal paragraph_lines
+        if paragraph_lines:
+            html_parts.append("<p>" + "<br/>".join(paragraph_lines) + "</p>")
+            paragraph_lines = []
+
+    def flush_list() -> None:
+        nonlocal list_items
+        if list_items:
+            html_parts.append("<ul>" + "".join(list_items) + "</ul>")
+            list_items = []
+
+    for raw_line in lines:
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            flush_paragraph()
+            flush_list()
+            if in_code_block:
+                html_parts.append("</code></pre>")
+                in_code_block = False
+            else:
+                html_parts.append("<pre><code>")
+                in_code_block = True
+            continue
+
+        if in_code_block:
+            html_parts.append(html.escape(raw_line))
+            continue
+
+        if not stripped:
+            flush_paragraph()
+            flush_list()
+            continue
+
+        heading_match = re.match(r"^(#{1,6})\s+(.*)$", stripped)
+        if heading_match:
+            flush_paragraph()
+            flush_list()
+            level = len(heading_match.group(1))
+            heading_text = html.escape(heading_match.group(2))
+            html_parts.append(f"<h{level}>{heading_text}</h{level}>")
+            continue
+
+        bullet_match = re.match(r"^[-*]\s+(.*)$", stripped)
+        if bullet_match:
+            flush_paragraph()
+            list_items.append(f"<li>{html.escape(bullet_match.group(1))}</li>")
+            continue
+
+        flush_list()
+        paragraph_lines.append(html.escape(stripped))
+
+    flush_paragraph()
+    flush_list()
+    if in_code_block:
+        html_parts.append("</code></pre>")
+
+    return "\n".join(html_parts)
+
+
+def _row_meeting_dates(row: dict[str, Any]) -> list[date]:
+    parsed_dates: list[date] = []
+    for raw_value in (row.get("dates") or {}).values():
+        if not raw_value:
+            continue
+        try:
+            parsed_dates.append(_parse_date(str(raw_value)))
+        except ValueError:
+            continue
+    return parsed_dates
+
+
+def _build_instructional_slot_lookup(
+    calendar_json: dict[str, Any],
+) -> tuple[dict[int, dict[int, dict[str, Any]]], list[dict[str, Any]]]:
+    lookup: dict[int, dict[int, dict[str, Any]]] = {}
+    rows: list[dict[str, Any]] = []
+    for row in calendar_json.get("rows", []):
+        if bool(row.get("no_class")) or bool(row.get("no_class_notice")):
+            continue
+        week_number = row.get("week_number")
+        slot_in_week = row.get("slot_in_week")
+        if not isinstance(week_number, int) or not isinstance(slot_in_week, int):
+            continue
+        if not _row_meeting_dates(row):
+            continue
+        lookup.setdefault(week_number, {})[slot_in_week] = row
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            int(row.get("week_number") or 0),
+            int(row.get("slot_in_week") or 0),
+        )
+    )
+    return lookup, rows
+
+
+def _resolve_programming_due_date(
+    *,
+    due_rule: dict[str, Any],
+    release_date: date,
+    all_rows: list[dict[str, Any]],
+    slot_lookup: dict[int, dict[int, dict[str, Any]]],
+) -> date | None:
+    due_week = due_rule.get("week")
+    due_day = due_rule.get("day")
+    if due_week is not None and due_day is not None:
+        week_rows = slot_lookup.get(int(due_week), {})
+        target_row = week_rows.get(int(due_day))
+        if target_row is None:
+            return None
+        target_dates = _row_meeting_dates(target_row)
+        return max(target_dates) if target_dates else None
+
+    strategy = str(due_rule.get("strategy") or "recommended").strip().lower()
+    if strategy != "recommended":
+        return None
+
+    include_exam_days = bool(due_rule.get("include_exam_days", False))
+    min_days_after_release = int(due_rule.get("min_days_after_release", 7))
+    preferred_weekday = int(due_rule.get("preferred_weekday", WEEKDAY_TO_INT["Sun"]))
+    earliest_date = release_date + timedelta(days=min_days_after_release)
+
+    candidate_rows: list[tuple[date, dict[str, Any]]] = []
+    for row in all_rows:
+        if (not include_exam_days) and bool(row.get("exam_names")):
+            continue
+        row_dates = _row_meeting_dates(row)
+        if not row_dates:
+            continue
+        canonical_date = max(row_dates)
+        if canonical_date >= earliest_date:
+            candidate_rows.append((canonical_date, row))
+    candidate_rows.sort(key=lambda pair: pair[0])
+    if not candidate_rows:
+        return None
+
+    for candidate_date, _ in candidate_rows:
+        if candidate_date.weekday() == preferred_weekday:
+            return candidate_date
+    return candidate_rows[0][0]
+
+
+def _build_assignment_publish_plans(
+    normalized_plan: dict[str, Any],
+    calendar_json: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    warnings: list[str] = []
+    templates = list(normalized_plan.get("assignments") or [])
+    if not templates:
+        return [], warnings
+
+    timezone_name = str(normalized_plan["term"]["timezone"])
+    tzinfo = ZoneInfo(timezone_name)
+    slot_lookup, all_rows = _build_instructional_slot_lookup(calendar_json)
+
+    plans: list[dict[str, Any]] = []
+    for template in templates:
+        template_type = str(template.get("type") or "").strip().lower()
+        template_id = str(template.get("id") or template_type)
+        markdown_template = str((template.get("contents") or {}).get("markdown") or "")
+        title_template = (
+            str(template.get("title_template") or "").strip()
+            or str(template.get("title") or "").strip()
+        )
+        if template_type == "weekly_study_notes":
+            rules = template.get("rules") or {}
+            include_exam_days = bool(rules.get("include_exam_days", True))
+            include_exam_only_weeks = bool(rules.get("include_exam_only_weeks", False))
+            unlock_time = _time_from_hhmm(str(rules.get("unlock_time", "00:00")))
+            due_time = _time_from_hhmm(str(rules.get("due_time", "23:59")))
+            lock_time = _time_from_hhmm(str(rules.get("lock_time", str(rules.get("due_time", "23:59")))))
+            due_days_after = int(rules.get("due_days_after", 0))
+            lock_days_after_due = int(rules.get("lock_days_after_due", 0))
+
+            for week_number in sorted(slot_lookup.keys()):
+                week_rows_all = list(slot_lookup[week_number].values())
+                week_rows = [
+                    row
+                    for row in week_rows_all
+                    if include_exam_days or not bool(row.get("exam_names"))
+                ]
+                if not week_rows:
+                    if include_exam_only_weeks and week_rows_all:
+                        week_rows = week_rows_all
+                    else:
+                        continue
+
+                all_week_dates = [
+                    d for row in week_rows for d in _row_meeting_dates(row)
+                ]
+                if not all_week_dates:
+                    continue
+                unlock_date = min(all_week_dates)
+                due_date = max(all_week_dates) + timedelta(days=due_days_after)
+                lock_date = due_date + timedelta(days=lock_days_after_due)
+
+                context = {"week_number": week_number}
+                title = (
+                    title_template.format(**context)
+                    if title_template
+                    else f"Weekly Study Notes Week {week_number:02d}"
+                )
+                try:
+                    markdown_body = markdown_template.format(**context)
+                except Exception:
+                    markdown_body = markdown_template
+                plans.append(
+                    {
+                        "template_id": template_id,
+                        "instance_id": f"{template_id}-week-{week_number:02d}",
+                        "type": template_type,
+                        "autograder_type": "text",
+                        "autograder_repo_path": None,
+                        "title": title,
+                        "description_html": _markdown_to_html(markdown_body),
+                        "assignment_group_name": template["assignment_group_name"],
+                        "points_possible": float(template["points_possible"]),
+                        "published": bool(template["published"]),
+                        "submission_types": list(template["submission_types"]),
+                        "unlock_at": datetime.combine(
+                            unlock_date, unlock_time, tzinfo=tzinfo
+                        ).isoformat(),
+                        "due_at": datetime.combine(
+                            due_date, due_time, tzinfo=tzinfo
+                        ).isoformat(),
+                        "lock_at": datetime.combine(
+                            lock_date, lock_time, tzinfo=tzinfo
+                        ).isoformat(),
+                        "week_number": week_number,
+                    }
+                )
+            continue
+
+        if template_type == "programming_assignment":
+            instances = list((template.get("rules") or {}).get("instances") or [])
+            if not instances:
+                warnings.append(
+                    f"Programming assignment template '{template_id}' has no rules.instances."
+                )
+                continue
+
+            for instance_idx, instance in enumerate(instances, start=1):
+                release_rule = instance.get("release") or {}
+                release_week = int(release_rule.get("week", 0))
+                release_day = int(release_rule.get("day", 2))
+                release_time = _time_from_hhmm(str(release_rule.get("time", "00:00")))
+                release_row = slot_lookup.get(release_week, {}).get(release_day)
+                if release_row is None:
+                    warnings.append(
+                        f"Programming assignment '{template_id}' instance {instance_idx} release slot "
+                        f"(week={release_week}, day={release_day}) was not found."
+                    )
+                    continue
+                release_dates = _row_meeting_dates(release_row)
+                if not release_dates:
+                    continue
+                release_date = max(release_dates)
+
+                due_rule = instance.get("due") or {}
+                due_date = _resolve_programming_due_date(
+                    due_rule=due_rule,
+                    release_date=release_date,
+                    all_rows=all_rows,
+                    slot_lookup=slot_lookup,
+                )
+                if due_date is None:
+                    warnings.append(
+                        f"Programming assignment '{template_id}' instance {instance_idx} due date could not be resolved."
+                    )
+                    continue
+                due_time = _time_from_hhmm(str(due_rule.get("time", "23:59")))
+
+                context = {
+                    "week_number": release_week,
+                    "day": release_day,
+                    "instance_index": instance_idx,
+                }
+                instance_title = str(instance.get("title") or "").strip()
+                if instance_title:
+                    title = instance_title
+                elif title_template:
+                    try:
+                        title = title_template.format(**context)
+                    except Exception:
+                        title = title_template
+                else:
+                    title = f"Programming Assignment {instance_idx}"
+                try:
+                    markdown_body = markdown_template.format(**context)
+                except Exception:
+                    markdown_body = markdown_template
+
+                plans.append(
+                    {
+                        "template_id": template_id,
+                        "instance_id": str(instance.get("id") or f"{template_id}-{instance_idx}"),
+                        "type": template_type,
+                        "autograder_type": "programming",
+                        "autograder_repo_path": str(
+                            instance.get("repo_path")
+                            or instance.get("id")
+                            or f"{template_id}-{instance_idx}"
+                        ),
+                        "title": title,
+                        "description_html": _markdown_to_html(markdown_body),
+                        "assignment_group_name": template["assignment_group_name"],
+                        "points_possible": float(template["points_possible"]),
+                        "published": bool(template["published"]),
+                        "submission_types": list(template["submission_types"]),
+                        "unlock_at": datetime.combine(
+                            release_date, release_time, tzinfo=tzinfo
+                        ).isoformat(),
+                        "due_at": datetime.combine(
+                            due_date, due_time, tzinfo=tzinfo
+                        ).isoformat(),
+                        "lock_at": None,
+                        "week_number": release_week,
+                    }
+                )
+            continue
+
+        warnings.append(
+            f"Unsupported assignment template type '{template_type}' for '{template_id}'."
+        )
+
+    plans.sort(
+        key=lambda plan: (
+            str(plan.get("unlock_at") or ""),
+            str(plan.get("title") or ""),
+        )
+    )
+    return plans, warnings
+
+
+def _publish_generated_assignments(
+    canvas_course: CanvasCourse,
+    *,
+    assignment_plans: list[dict[str, Any]],
+    dry_run: bool,
+) -> tuple[list[str], list[dict[str, Any]]]:
+    actions: list[str] = []
+    exported_assignments: list[dict[str, Any]] = []
+    if not assignment_plans:
+        return actions, exported_assignments
+
+    assignment_group_cache: dict[str, Any] = {}
+
+    def get_group(group_name: str):
+        if group_name in assignment_group_cache:
+            return assignment_group_cache[group_name]
+        if dry_run:
+            assignment_group_cache[group_name] = None
+            return None
+        group = canvas_course.create_assignment_group(
+            name=group_name,
+            delete_existing=False,
+        )
+        assignment_group_cache[group_name] = group
+        return group
+
+    total_assignments = len(assignment_plans)
+    log.info("Publishing generated assignments: %d total", total_assignments)
+    for idx, plan in enumerate(assignment_plans, start=1):
+        title = str(plan["title"])
+        assignment_group_name = str(plan["assignment_group_name"])
+        payload: dict[str, Any] = {
+            "name": title,
+            "description": str(plan["description_html"]),
+            "points_possible": float(plan["points_possible"]),
+            "published": bool(plan["published"]),
+            "submission_types": list(plan["submission_types"]),
+            "unlock_at": plan.get("unlock_at"),
+            "due_at": plan.get("due_at"),
+        }
+        if plan.get("lock_at"):
+            payload["lock_at"] = plan["lock_at"]
+
+        assignment_group = get_group(assignment_group_name)
+        if assignment_group is not None:
+            payload["assignment_group_id"] = int(getattr(assignment_group, "id"))
+
+        existing_assignment = _find_assignment_by_name(canvas_course, title)
+        log.info(
+            "Assignment %d/%d | %s | group=%s",
+            idx,
+            total_assignments,
+            title,
+            assignment_group_name,
+        )
+        if existing_assignment is None:
+            actions.append(f"create-assignment:{title}")
+            if not dry_run:
+                created_assignment = canvas_course.course.create_assignment(
+                    assignment=payload
+                )
+                exported_assignments.append(
+                    {
+                        "assignment_id": int(getattr(created_assignment, "id")),
+                        "title": title,
+                        "assignment_group_name": assignment_group_name,
+                        "autograder_type": str(plan.get("autograder_type") or "text"),
+                        "autograder_repo_path": plan.get("autograder_repo_path"),
+                    }
+                )
+            else:
+                exported_assignments.append(
+                    {
+                        "assignment_id": None,
+                        "title": title,
+                        "assignment_group_name": assignment_group_name,
+                        "autograder_type": str(plan.get("autograder_type") or "text"),
+                        "autograder_repo_path": plan.get("autograder_repo_path"),
+                    }
+                )
+            continue
+
+        actions.append(f"update-assignment:{title}")
+        if not dry_run:
+            existing_assignment.edit(assignment=payload)
+            exported_assignments.append(
+                {
+                    "assignment_id": int(getattr(existing_assignment, "id")),
+                    "title": title,
+                    "assignment_group_name": assignment_group_name,
+                    "autograder_type": str(plan.get("autograder_type") or "text"),
+                    "autograder_repo_path": plan.get("autograder_repo_path"),
+                }
+            )
+        else:
+            exported_assignments.append(
+                {
+                    "assignment_id": None,
+                    "title": title,
+                    "assignment_group_name": assignment_group_name,
+                    "autograder_type": str(plan.get("autograder_type") or "text"),
+                    "autograder_repo_path": plan.get("autograder_repo_path"),
+                }
+            )
+    return actions, exported_assignments
+
+
+def _build_autograder_assignment_snippet(
+    *,
+    course_id: int | None,
+    exported_assignments: list[dict[str, Any]],
+) -> dict[str, Any]:
+    groups_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for entry in exported_assignments:
+        group_name = str(entry.get("assignment_group_name") or "Assignments")
+        group_type = str(entry.get("autograder_type") or "text")
+        key = (group_name, group_type)
+        if key not in groups_by_key:
+            groups_by_key[key] = {
+                "name": group_name,
+                "type": group_type,
+                "assignments": [],
+            }
+
+        assignment_id = entry.get("assignment_id")
+        repo_path = entry.get("autograder_repo_path")
+        if group_type == "programming":
+            groups_by_key[key]["assignments"].append(
+                {
+                    "id": assignment_id,
+                    "repo_path": str(repo_path or ""),
+                }
+            )
+        else:
+            groups_by_key[key]["assignments"].append(assignment_id)
+
+    assignment_groups = [
+        groups_by_key[key]
+        for key in sorted(groups_by_key.keys(), key=lambda item: (item[0], item[1]))
+    ]
+    return {
+        "course_id": course_id,
+        "assignment_groups": assignment_groups,
+    }
+
+
 def publish_calendar_to_canvas(
     canvas_course: CanvasCourse,
     *,
     normalized_plan: dict[str, Any],
     calendar_json: dict[str, Any],
+    assignment_plans: list[dict[str, Any]],
     page_title: str,
     module_name: str | None,
     publish_weekly_slides: bool,
     publish_attendance_quizzes: bool,
+    publish_assignments: bool,
     weekly_module_template: str,
     weekly_slides_title_prefix: str,
     weekly_slides_indent: int,
@@ -2039,6 +2692,7 @@ def publish_calendar_to_canvas(
     dry_run: bool,
 ) -> dict[str, Any]:
     actions: list[str] = []
+    exported_assignments: list[dict[str, Any]] = []
     page_url = _slugify(page_title)
     normalized_title_prefix = str(weekly_slides_title_prefix or "")
     normalized_weekly_indent = max(0, int(weekly_slides_indent))
@@ -2395,6 +3049,14 @@ def publish_calendar_to_canvas(
         )
         actions.extend(attendance_actions)
 
+    if publish_assignments:
+        assignment_actions, exported_assignments = _publish_generated_assignments(
+            canvas_course,
+            assignment_plans=assignment_plans,
+            dry_run=dry_run,
+        )
+        actions.extend(assignment_actions)
+
     return {
         "dry_run": dry_run,
         "actions": actions,
@@ -2403,6 +3065,8 @@ def publish_calendar_to_canvas(
         "module_name": module_name,
         "publish_weekly_slides": publish_weekly_slides,
         "publish_attendance_quizzes": publish_attendance_quizzes,
+        "publish_assignments": publish_assignments,
+        "exported_assignments": exported_assignments,
         "weekly_module_template": weekly_module_template,
     }
 
@@ -2414,6 +3078,7 @@ def build_course_calendar(
     publish: bool = False,
     publish_weekly_slides: bool = False,
     publish_attendance_quizzes: bool = False,
+    publish_assignments: bool = False,
     dry_run: bool = True,
     canvas_course: CanvasCourse | None = None,
     page_title_override: str | None = None,
@@ -2423,6 +3088,10 @@ def build_course_calendar(
     raw = load_course_plan(plan_path)
     normalized = normalize_course_plan(raw)
     calendar_json, warnings = build_schedule(normalized)
+    assignment_plans, assignment_warnings = _build_assignment_publish_plans(
+        normalized, calendar_json
+    )
+    warnings.extend(assignment_warnings)
     calendar_html = render_calendar_html(normalized, calendar_json)
 
     output_root = Path(output_dir)
@@ -2430,10 +3099,16 @@ def build_course_calendar(
     html_path = output_root / "calendar.html"
     json_path = output_root / "calendar.json"
     normalized_path = output_root / "normalized_plan.yaml"
+    assignment_plan_path = output_root / "assignment_plan.json"
+    autograder_snippet_path = output_root / "autograder_assignment_snippet.yaml"
 
     yaml = _load_yaml_module()
     html_path.write_text(calendar_html, encoding="utf-8")
     json_path.write_text(json.dumps(calendar_json, indent=2) + "\n", encoding="utf-8")
+    assignment_plan_path.write_text(
+        json.dumps({"assignments": assignment_plans}, indent=2) + "\n",
+        encoding="utf-8",
+    )
     normalized_path.write_text(
         yaml.safe_dump(
             {
@@ -2483,10 +3158,12 @@ def build_course_calendar(
             canvas_course,
             normalized_plan=normalized,
             calendar_json=calendar_json,
+            assignment_plans=assignment_plans,
             page_title=page_title,
             module_name=module_name_value,
             publish_weekly_slides=publish_weekly_slides,
             publish_attendance_quizzes=publish_attendance_quizzes,
+            publish_assignments=publish_assignments,
             weekly_module_template=weekly_module_template,
             weekly_slides_title_prefix=normalized["publishing"][
                 "weekly_slides_title_prefix"
@@ -2505,6 +3182,35 @@ def build_course_calendar(
             dry_run=dry_run,
         )
 
+    if publish_result is not None and publish_result.get("exported_assignments") is not None:
+        snippet_assignments = list(publish_result.get("exported_assignments") or [])
+    else:
+        snippet_assignments = [
+            {
+                "assignment_id": None,
+                "title": str(plan.get("title") or ""),
+                "assignment_group_name": str(
+                    plan.get("assignment_group_name") or "Assignments"
+                ),
+                "autograder_type": str(plan.get("autograder_type") or "text"),
+                "autograder_repo_path": plan.get("autograder_repo_path"),
+            }
+            for plan in assignment_plans
+        ]
+    snippet_course_id = (
+        int(getattr(canvas_course.course, "id"))
+        if canvas_course is not None and hasattr(canvas_course, "course")
+        else None
+    )
+    autograder_snippet = _build_autograder_assignment_snippet(
+        course_id=snippet_course_id,
+        exported_assignments=snippet_assignments,
+    )
+    autograder_snippet_path.write_text(
+        yaml.safe_dump(autograder_snippet, sort_keys=False, allow_unicode=False),
+        encoding="utf-8",
+    )
+
     return CalendarBuildResult(
         normalized_plan=normalized,
         calendar_json=calendar_json,
@@ -2514,6 +3220,8 @@ def build_course_calendar(
             "calendar_html": html_path,
             "calendar_json": json_path,
             "normalized_plan": normalized_path,
+            "assignment_plan": assignment_plan_path,
+            "autograder_assignment_snippet": autograder_snippet_path,
         },
         publish_result=publish_result,
     )

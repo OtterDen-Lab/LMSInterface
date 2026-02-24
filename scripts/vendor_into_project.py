@@ -26,6 +26,7 @@ FILES_TO_COPY = [
     'backends.py',
     'canvas_interface.py',
     'classes.py',
+    'course_plan.py',
     'helpers.py',
     'privacy.py',
     'interfaces.py',

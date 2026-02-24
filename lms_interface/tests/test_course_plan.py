@@ -5,7 +5,9 @@ from types import SimpleNamespace
 import pytest
 
 from lms_interface.course_plan import (
+    _build_assignment_publish_plans,
     _build_attendance_quiz_plans,
+    _build_autograder_assignment_snippet,
     _build_weekly_slide_items,
     _resolve_canvas_section_ids,
     build_schedule,
@@ -80,6 +82,38 @@ def test_normalize_course_plan_supports_compact_resources_and_exam_coverage():
     assert normalized["exam_coverage"]["Exam 1"] == ["topic-1"]
 
 
+def test_normalize_course_plan_supports_assignment_templates():
+    raw_plan = _base_plan()
+    raw_plan["assignments"] = [
+        {
+            "id": "weekly-notes",
+            "type": "weekly_study_notes",
+            "title_template": "Weekly Notes {week_number:02d}",
+            "contents": {"markdown": "# Notes\nBring one question."},
+            "rules": {"due_time": "22:00"},
+        },
+        {
+            "id": "pa",
+            "type": "programming_assignment",
+            "title_template": "PA {instance_index}",
+            "contents": {"markdown": "Implement feature X"},
+            "rules": {
+                "instances": [
+                    {"release": {"week": 1, "day": 1, "time": "08:00"}},
+                ]
+            },
+        },
+    ]
+
+    normalized = normalize_course_plan(raw_plan)
+
+    assert len(normalized["assignments"]) == 2
+    assert normalized["assignments"][0]["type"] == "weekly_study_notes"
+    assert normalized["assignments"][0]["rules"]["due_time"] == "22:00"
+    assert normalized["assignments"][1]["type"] == "programming_assignment"
+    assert normalized["assignments"][1]["rules"]["instances"][0]["release"]["week"] == 1
+
+
 def test_normalize_course_plan_sets_weekly_slides_publishing_defaults():
     normalized = normalize_course_plan(_base_plan())
 
@@ -89,6 +123,77 @@ def test_normalize_course_plan_sets_weekly_slides_publishing_defaults():
     assert normalized["publishing"]["weekly_slides_prune_existing"] is True
     assert normalized["publishing"]["attendance"]["module_section_header"] == "Attendence"
     assert normalized["publishing"]["attendance"]["module_indent"] == 1
+
+
+def test_build_assignment_publish_plans_generates_weekly_and_programming():
+    raw_plan = _base_plan()
+    raw_plan["assignments"] = [
+        {
+            "id": "weekly-notes",
+            "type": "weekly_study_notes",
+            "title_template": "Weekly Notes {week_number:02d}",
+            "contents": {"markdown": "# Week {week_number}"},
+            "rules": {"due_time": "23:00"},
+        },
+        {
+            "id": "pa",
+            "type": "programming_assignment",
+            "title_template": "PA {instance_index}",
+            "contents": {"markdown": "Do work"},
+            "rules": {
+                "instances": [
+                    {
+                        "id": "pa-1",
+                        "release": {"week": 1, "day": 1, "time": "09:00"},
+                        "due": {
+                            "strategy": "recommended",
+                            "min_days_after_release": 2,
+                            "preferred_weekday": "Thu",
+                            "time": "23:59",
+                            "include_exam_days": False,
+                        },
+                    }
+                ]
+            },
+        },
+    ]
+    normalized = normalize_course_plan(raw_plan)
+    schedule, _ = build_schedule(normalized)
+
+    plans, warnings = _build_assignment_publish_plans(normalized, schedule)
+
+    assert warnings == []
+    assert any(plan["title"] == "Weekly Notes 01" for plan in plans)
+    pa_plan = next(plan for plan in plans if plan["instance_id"] == "pa-1")
+    assert pa_plan["unlock_at"].startswith("2026-01-06T09:00:00")
+    assert pa_plan["due_at"].startswith("2026-01-08T23:59:00")
+
+
+def test_build_autograder_assignment_snippet_shapes_assignments():
+    snippet = _build_autograder_assignment_snippet(
+        course_id=31580,
+        exported_assignments=[
+            {
+                "assignment_id": 111,
+                "assignment_group_name": "Programming Assignments",
+                "autograder_type": "programming",
+                "autograder_repo_path": "PA1",
+            },
+            {
+                "assignment_id": 222,
+                "assignment_group_name": "Learning Logs",
+                "autograder_type": "text",
+                "autograder_repo_path": None,
+            },
+        ],
+    )
+
+    assert snippet["course_id"] == 31580
+    groups = {group["name"]: group for group in snippet["assignment_groups"]}
+    assert groups["Programming Assignments"]["assignments"] == [
+        {"id": 111, "repo_path": "PA1"}
+    ]
+    assert groups["Learning Logs"]["assignments"] == [222]
 
 
 def test_normalize_course_plan_respects_weekly_slides_publishing_overrides():

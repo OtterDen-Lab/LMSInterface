@@ -46,7 +46,70 @@ publishing:
     due_minutes_after_start: 10
     lock_minutes_after_start: 10
     include_exam_days: false
-    
+
+
+assignments:
+- id: weekly-notes
+  type: weekly_study_notes
+  title_template: "Weekly Study Notes {week_number:02d}"
+  assignment_group_name: "Learning Logs"
+  points_possible: 10
+  submission_types: ["online_text_entry"]
+  published: true
+  contents:
+    markdown: |
+      # How to Write Your Weekly Study Notes
+      ## Instructions
+      Your goal is to create notes that will actually help you study later. A good approach:
+      1. List the major topics/concepts covered this week (e.g., "process scheduling," "round-robin algorithm," "context switching")
+      2. For each topic, write a brief explanation that includes:
+        - What it is and why it matters
+        - How it connects to other concepts
+        - An example or key detail that helps you remember it
+      3. Flag anything unclear: Note topics you want to revisit or questions you still have
+
+      ## Example:
+      - Topic: Round-robin scheduling
+        - Explanation: CPU scheduling algorithm where each process gets equal time slice. Prevents starvation but can cause lots of context switches if time quantum is too small. Related to how the OS balances fairness vs. efficiency.
+      - Key detail: Time quantum typically 10-100ms
+      
+      ## Final Notes:
+      - There is a minimum of 250 words for these study notes, which shouldn't be too hard to hit.  Focus on clarity and organization that length.
+      - Submissions should be text typed into the textbox on canvas.  Pictures of handwritten study notes and links to google documents will not be accepted. 
+  rules:
+    include_exam_days: false
+    include_exam_only_weeks: false
+    unlock_time: "00:00"
+    due_anchor: "week_last_class"
+    due_days_after: 0
+    due_time: "23:59"
+    lock_days_after_due: 0
+    lock_time: "23:59"
+
+- id: pa
+  type: programming_assignment
+  title_template: "PA {instance_index}"
+  assignment_group_name: "Programming Assignments"
+  points_possible: 100
+  submission_types: ["online_upload"]
+  published: true
+  contents:
+    markdown: |
+      # Programming Assignment {instance_index}
+      See repo instructions.
+  rules:
+    instances:
+    - id: PA1
+      repo_path: PA1
+      release: {week: 2, day: 2, time: "12:00"}
+      due:
+        strategy: recommended
+        min_days_after_release: 13
+        preferred_weekday: Sun
+        include_exam_days: false
+        time: "23:59"
+
+
 topics:
 
 ## Exam 1 ##

@@ -810,15 +810,29 @@ class CanvasAssignment(LMSWrapper):
       safe_name = safe_name.replace('\x00', '').strip()
       if safe_name in {"", ".", ".."}:
         safe_name = "attachment.bin"
+      _, extension = os.path.splitext(safe_name)
+      if not extension:
+        extension = ".bin"
 
-      with tempfile.TemporaryDirectory(
-          prefix="lms_interface_feedback_upload_") as temp_dir:
-        temp_path = os.path.join(temp_dir, safe_name)
-        with open(temp_path, "wb") as tmp:
+      temp_path = None
+      try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix="autograder_feedback_upload_",
+            suffix=extension,
+            delete=False,
+        ) as tmp:
           tmp.write(buffer)
           tmp.flush()
           os.fsync(tmp.fileno())
+          temp_path = tmp.name
         submission.upload_comment(temp_path)  # Canvas expects a path
+      finally:
+        if temp_path:
+          try:
+            os.remove(temp_path)
+          except OSError as e:
+            log.warning(f"Failed to clean up temporary feedback file: {e}")
 
     def looks_like_html(text: str) -> bool:
       if not text:
@@ -831,19 +845,7 @@ class CanvasAssignment(LMSWrapper):
       if looks_like_html(comments):
         upload_buffer_as_file(comments.encode('utf-8'), "feedback.html")
       else:
-        try:
-          submission.edit(
-            comment={
-              'text_comment': comments,
-            },
-          )
-        except (requests.exceptions.RequestException,
-                canvasapi.exceptions.CanvasException) as e:
-          log.warning(f"Failed to post inline feedback comment for {user_id}: {e}")
-          extra = _format_canvas_exception(e)
-          if extra:
-            log.warning(extra)
-          upload_buffer_as_file(comments.encode('utf-8'), "feedback.txt")
+        upload_buffer_as_file(comments.encode('utf-8'), "feedback.txt")
     
     for i, attachment_buffer in enumerate(attachments):
       upload_buffer_as_file(attachment_buffer.read(), attachment_buffer.name)
