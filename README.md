@@ -192,14 +192,19 @@ This repo can publish wheel/sdist artifacts to GitHub Releases on tag pushes.
 
 Flow:
 
-1. Bump version in `pyproject.toml` (for example via `git bump patch`).
-2. Create and push a matching tag (`v<version>`), such as `v0.4.5`.
-3. GitHub Actions builds `dist/*` and attaches artifacts to that release.
+1. Bump version and publish commit/tag in one step (for example via `git bump patch`).
+2. GitHub Actions builds `dist/*` and attaches artifacts to that release.
 
-One-command option:
+Default one-command option:
 
 ```bash
-git bump patch --tag --push
+git bump patch
+```
+
+Optional local-only bump (no push/tag):
+
+```bash
+git bump patch --no-tag --no-push
 ```
 
 Tag/version contract:

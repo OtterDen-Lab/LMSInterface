@@ -4,15 +4,15 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  git bump [patch|minor|major] [-m "commit message"] [--no-commit] [--dry-run] [--skip-tests] [--tag] [--push] [--remote <name>]
+  git bump [patch|minor|major] [-m "commit message"] [--no-commit] [--dry-run] [--skip-tests] [--tag|--no-tag] [--push|--no-push] [--remote <name>]
 
 Behavior:
   1. Run tests (unless --skip-tests)
   2. Bump version via `uv version --bump <kind>`
   3. Stage `pyproject.toml` and `uv.lock`
   4. Commit (unless --no-commit)
-  5. Optionally create tag `v<version>` (with --tag)
-  6. Optionally push branch and tag (with --push)
+  5. Create tag `v<version>` by default (disable with --no-tag)
+  6. Push branch and tag by default (disable with --no-push)
 
 Notes:
   - Requires a clean index and working tree (tracked files).
@@ -38,8 +38,10 @@ COMMIT_MESSAGE=""
 NO_COMMIT="0"
 DRY_RUN="0"
 SKIP_TESTS="0"
-CREATE_TAG="0"
-PUSH_CHANGES="0"
+CREATE_TAG="1"
+PUSH_CHANGES="1"
+TAG_EXPLICIT="0"
+PUSH_EXPLICIT="0"
 REMOTE_NAME="origin"
 TEST_COMMAND='uv run pytest -q'
 
@@ -69,10 +71,22 @@ while [[ $# -gt 0 ]]; do
       ;;
     --tag)
       CREATE_TAG="1"
+      TAG_EXPLICIT="1"
+      shift
+      ;;
+    --no-tag)
+      CREATE_TAG="0"
+      TAG_EXPLICIT="1"
       shift
       ;;
     --push)
       PUSH_CHANGES="1"
+      PUSH_EXPLICIT="1"
+      shift
+      ;;
+    --no-push)
+      PUSH_CHANGES="0"
+      PUSH_EXPLICIT="1"
       shift
       ;;
     --remote)
@@ -108,7 +122,7 @@ version="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n 1)"
 run git add pyproject.toml uv.lock
 
 if [[ "$NO_COMMIT" == "1" ]]; then
-  if [[ "$CREATE_TAG" == "1" || "$PUSH_CHANGES" == "1" ]]; then
+  if [[ ("$TAG_EXPLICIT" == "1" && "$CREATE_TAG" == "1") || ("$PUSH_EXPLICIT" == "1" && "$PUSH_CHANGES" == "1") ]]; then
     die "--tag and --push require a commit. Remove --no-commit."
   fi
   echo "Staged version bump updates (no commit created)."

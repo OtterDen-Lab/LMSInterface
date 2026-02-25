@@ -85,7 +85,7 @@ set -euo pipefail
 usage() {{
   cat <<'EOF'
 Usage:
-  git bump [patch|minor|major] [-m "commit message"] [--no-commit] [--dry-run] [--skip-tests] [--verbose] [--tag] [--push] [--remote <name>]
+  git bump [patch|minor|major] [-m "commit message"] [--no-commit] [--dry-run] [--skip-tests] [--verbose] [--tag|--no-tag] [--push|--no-push] [--remote <name>]
 
 Behavior:
   1. Vendor LMSInterface via `python scripts/vendor_lms_interface.py`
@@ -93,8 +93,8 @@ Behavior:
   3. Bump version via `uv version --bump <kind>`
   4. Stage `pyproject.toml`, `uv.lock`, `lms_interface/`, and managed tooling scripts
   5. Commit (unless --no-commit)
-  6. Optionally create tag `v<version>` (with --tag)
-  7. Optionally push branch and tag (with --push)
+  6. Create tag `v<version>` by default (disable with --no-tag)
+  7. Push branch and tag by default (disable with --no-push)
 
 Notes:
   - Requires a clean index and working tree (tracked files).
@@ -122,8 +122,10 @@ NO_COMMIT="0"
 DRY_RUN="0"
 VERBOSE="0"
 SKIP_TESTS="0"
-CREATE_TAG="0"
-PUSH_CHANGES="0"
+CREATE_TAG="1"
+PUSH_CHANGES="1"
+TAG_EXPLICIT="0"
+PUSH_EXPLICIT="0"
 REMOTE_NAME="origin"
 TEST_COMMAND={test_command_quoted}
 
@@ -157,10 +159,22 @@ while [[ $# -gt 0 ]]; do
       ;;
     --tag)
       CREATE_TAG="1"
+      TAG_EXPLICIT="1"
+      shift
+      ;;
+    --no-tag)
+      CREATE_TAG="0"
+      TAG_EXPLICIT="1"
       shift
       ;;
     --push)
       PUSH_CHANGES="1"
+      PUSH_EXPLICIT="1"
+      shift
+      ;;
+    --no-push)
+      PUSH_CHANGES="0"
+      PUSH_EXPLICIT="1"
       shift
       ;;
     --remote)
@@ -207,7 +221,7 @@ run git add pyproject.toml uv.lock lms_interface \\
   .githooks/pre-commit
 
 if [[ "$NO_COMMIT" == "1" ]]; then
-  if [[ "$CREATE_TAG" == "1" || "$PUSH_CHANGES" == "1" ]]; then
+  if [[ ("$TAG_EXPLICIT" == "1" && "$CREATE_TAG" == "1") || ("$PUSH_EXPLICIT" == "1" && "$PUSH_CHANGES" == "1") ]]; then
     die "--tag and --push require a commit. Remove --no-commit."
   fi
   echo "Staged version bump and vendored LMSInterface updates (no commit created)."
