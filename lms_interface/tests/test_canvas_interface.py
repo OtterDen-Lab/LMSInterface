@@ -396,6 +396,25 @@ class TestFileSubmissionSecurity:
             with pytest.raises(ValueError, match="content-type"):
                 _ = submission.files
 
+    def test_files_allow_cpp_with_text_x_c_content_type(self):
+        from lms_interface.classes import FileSubmission__Canvas
+
+        submission = FileSubmission__Canvas(attachments=[{
+            "filename": "main_hw3_1.cpp",
+            "url": "https://example.com/main_hw3_1.cpp",
+            "content-type": "text/x-c",
+        }])
+
+        with patch(
+            "lms_interface.classes.urllib.request.urlopen",
+            return_value=self._FakeResponse(b"int main() { return 0; }", "text/x-c"),
+        ):
+            files = submission.files
+
+        assert len(files) == 1
+        assert files[0].name == "main_hw3_1.cpp"
+        assert files[0].read() == b"int main() { return 0; }"
+
     def test_files_download_and_sanitize_filename(self):
         from lms_interface.classes import FileSubmission__Canvas
 

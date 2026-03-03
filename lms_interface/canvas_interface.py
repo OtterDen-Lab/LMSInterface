@@ -865,6 +865,12 @@ class CanvasAssignment(LMSWrapper):
       limit = 1_000_000 # magically large number
     
     test_only = kwargs.get("test", False)
+    assignment_kind = kwargs.get("assignment_kind", "")
+    normalized_assignment_kind = re.sub(r"[\s_-]+", "", str(assignment_kind)).lower()
+    prefer_attachments = normalized_assignment_kind in {
+      "programmingassignment",
+      "programming",
+    }
     
     submissions: list[Submission] = []
     
@@ -906,7 +912,18 @@ class CanvasAssignment(LMSWrapper):
         has_attachments = student_submission.get("attachments") is not None and len(student_submission.get("attachments", [])) > 0
         has_text_body = student_submission.get("body") is not None and student_submission.get("body").strip() != ""
 
-        if has_text_body:
+        if has_attachments and (prefer_attachments or not has_text_body):
+          # File submission
+          log.debug(f"Detected file submission for {student.name}")
+          submissions.append(
+            FileSubmission__Canvas(
+              student=student,
+              status=Submission.Status.from_string(student_submission["workflow_state"], student_submission['score']),
+              attachments=student_submission["attachments"],
+              submission_index=student_submission_index
+            )
+          )
+        elif has_text_body:
           # Text submission - create object-like structure from dict
           log.debug(f"Detected text submission for {student.name}")
           class SubmissionObject:
@@ -919,17 +936,6 @@ class CanvasAssignment(LMSWrapper):
               student=student,
               status=Submission.Status.from_string(student_submission["workflow_state"], student_submission['score']),
               canvas_submission_data=SubmissionObject(student_submission),
-              submission_index=student_submission_index
-            )
-          )
-        elif has_attachments:
-          # File submission
-          log.debug(f"Detected file submission for {student.name}")
-          submissions.append(
-            FileSubmission__Canvas(
-              student=student,
-              status=Submission.Status.from_string(student_submission["workflow_state"], student_submission['score']),
-              attachments=student_submission["attachments"],
               submission_index=student_submission_index
             )
           )

@@ -129,6 +129,18 @@ PUSH_EXPLICIT="0"
 REMOTE_NAME="origin"
 TEST_COMMAND={test_command_quoted}
 
+# Run from a temporary copy so vendoring can safely rewrite scripts/git_bump.sh.
+if [[ "${{LMS_GIT_BUMP_STAGE2:-0}}" != "1" ]]; then
+  script_tmp="$(mktemp "${{TMPDIR:-/tmp}}/lms_git_bump.XXXXXX.sh")"
+  cp "$0" "$script_tmp"
+  chmod +x "$script_tmp"
+  exec env LMS_GIT_BUMP_STAGE2=1 LMS_GIT_BUMP_TMP="$script_tmp" bash "$script_tmp" "$@"
+fi
+
+if [[ -n "${{LMS_GIT_BUMP_TMP:-}}" ]]; then
+  trap 'rm -f "$LMS_GIT_BUMP_TMP"' EXIT
+fi
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     patch|minor|major)
@@ -297,7 +309,9 @@ def _default_tooling_config(target_root: Path) -> dict[str, str]:
 
     return {
         "skip_vendor_env": skip_var,
-        "test_command": "uv run pytest -q",
+        # `python -m pytest` ensures current working directory is on sys.path,
+        # so vendored top-level modules win over similarly named site-packages.
+        "test_command": "uv run python -m pytest -q",
         "precommit_extra": precommit_extra,
     }
 
@@ -389,7 +403,7 @@ def sync_tooling_templates(target_root: Path, dry_run: bool = False) -> bool:
         ),
         (
             target_root / "scripts" / "install_git_hooks.sh",
-            INSTALL_HOOKS_TEMPLATE,
+            INSTALL_HOOKS_TEMPLATE.format(),
             True,
         ),
         (
@@ -569,13 +583,16 @@ def update_pyproject_dependencies(target_root: Path, source_repo: Path, dry_run:
 
     changes = []
 
-    # Remove lms-interface dependency
-    for quote in ['"', "'"]:
-        pattern = f'{quote}lms-interface{quote}'
-        if pattern in content:
-            changes.append("Remove lms-interface from dependencies")
-            if not dry_run:
-                content = re.sub(rf'\s*{quote}lms-interface{quote}[,\s]*\n', '', content)
+    # Remove lms-interface dependency (including direct references like
+    # "lms-interface @ https://.../lms_interface.whl").
+    lms_dep_pattern = re.compile(
+        r'^\s*["\']lms[-_]interface(?:\s*@[^"\']+)?["\']\s*,?\s*$',
+        flags=re.MULTILINE,
+    )
+    if lms_dep_pattern.search(content):
+        changes.append("Remove lms-interface from dependencies")
+        if not dry_run:
+            content = lms_dep_pattern.sub('', content)
 
     # Remove uv.sources if it references lms-interface
     if '[tool.uv.sources]' in content and 'lms-interface' in content:
