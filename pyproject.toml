@@ -14,10 +14,10 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "canvasapi==3.2.0",
-    "requests==2.32.2",
-    "python-dotenv==1.0.1",
-    "PyYAML==6.0.3",
+    "canvasapi>=3.2,<4",
+    "requests>=2.32.4,<3",
+    "python-dotenv>=1,<2",
+    "PyYAML>=6,<7",
     "pytest>=8.4.2",
 ]
 
