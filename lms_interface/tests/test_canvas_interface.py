@@ -11,6 +11,8 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
+from lms_interface.canvas_interface import CanvasAssignment, CanvasInterface
+
 
 class TestCanvasInterfaceCredentials:
     """Tests for CanvasInterface credential handling."""
@@ -342,6 +344,71 @@ class TestQuestionUpload:
         result = mock_canvas_course.create_question(mock_quiz, [])
 
         assert result is None
+
+
+class TestCanvasAssignment:
+    @pytest.fixture
+    def assignment(self):
+        mock_interface = Mock(spec=CanvasInterface)
+        mock_course = Mock()
+        mock_course.course = Mock(id=12345)
+        mock_assignment = Mock()
+        mock_assignment.id = 67890
+
+        return CanvasAssignment(
+            canvasapi_interface=mock_interface,
+            canvasapi_course=mock_course,
+            canvasapi_assignment=mock_assignment,
+        )
+
+    def test_push_feedback_without_seconds_late_omits_late_fields(self, assignment):
+        submission = Mock(score=None, submission_comments=[])
+        assignment.assignment.get_submission.return_value = submission
+
+        result = assignment.push_feedback(
+            user_id=42,
+            score=88.5,
+            comments="",
+            seconds_late=0,
+        )
+
+        assert result is True
+        assignment.assignment.submissions_bulk_update.assert_called_once_with(
+            grade_data={"submission[posted_grade]": 88.5},
+            student_ids=[42],
+        )
+        submission.edit.assert_called_once_with(
+            submission={"posted_grade": 88.5},
+        )
+
+    def test_push_feedback_with_positive_seconds_late_marks_submission_late(self, assignment):
+        submission = Mock(score=None, submission_comments=[])
+        assignment.assignment.get_submission.return_value = submission
+
+        result = assignment.push_feedback(
+            user_id=42,
+            score=91.0,
+            comments="",
+            seconds_late=3600,
+        )
+
+        assert result is True
+        submission.edit.assert_called_once_with(
+            submission={
+                "posted_grade": 91.0,
+                "late_policy_status": "late",
+                "seconds_late_override": 3600,
+            },
+        )
+
+    def test_push_feedback_rejects_negative_seconds_late(self, assignment):
+        with pytest.raises(ValueError, match="greater than or equal to 0"):
+            assignment.push_feedback(
+                user_id=42,
+                score=91.0,
+                comments="",
+                seconds_late=-1,
+            )
 
 
 class TestFileSubmissionSecurity:

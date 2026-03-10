@@ -266,7 +266,8 @@ class PrivacyAssignmentAdapter(LMSAssignment):
       comments: str,
       attachments=None,
       keep_previous_best: bool = True,
-      clobber_feedback: bool = False
+      clobber_feedback: bool = False,
+      seconds_late: int | None = None,
   ) -> None:
     self._assignment.push_feedback(
       user_id=user_id,
@@ -274,5 +275,6 @@ class PrivacyAssignmentAdapter(LMSAssignment):
       comments=comments,
       attachments=attachments,
       keep_previous_best=keep_previous_best,
-      clobber_feedback=clobber_feedback
+      clobber_feedback=clobber_feedback,
+      seconds_late=seconds_late,
     )

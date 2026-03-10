@@ -396,12 +396,14 @@ def cleanup_missing_by_due_date(
                 assignment_updates_to_none += 1
                 continue
 
-            if (
-                clear_placeholder_grade
-                and desired_status == "none"
+            placeholder_grade_needs_clear = (
+                desired_status == "none"
                 and _placeholder_grade_needs_clear(submission)
-            ):
+            )
+            if placeholder_grade_needs_clear:
                 stats["placeholder_grade_needs_clear"] += 1
+
+            if clear_placeholder_grade and placeholder_grade_needs_clear:
                 stats["placeholder_grade_clear_attempted"] += 1
                 log.debug(
                     f"assignment={assignment.id} user={user_id} "
@@ -473,6 +475,13 @@ def cleanup_missing_by_due_date(
             f"skipped_submitted={assignment_skipped_submitted}, "
             f"skipped_no_due_date={assignment_skipped_no_due_date}, "
             f"errors={assignment_errors}"
+        )
+
+    if stats["placeholder_grade_needs_clear"] > 0 and not clear_placeholder_grade:
+        log.warning(
+            f"Detected {stats['placeholder_grade_needs_clear']} future-due "
+            "placeholder submissions with stale grade values (e.g., 0/Incomplete). "
+            "Re-run with --clear-placeholder-grade to clear those grades."
         )
 
     return stats

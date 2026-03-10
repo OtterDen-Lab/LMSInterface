@@ -1,7 +1,11 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from lms_interface.canvas_interface import CanvasAssignment, CanvasCourse, CanvasInterface
+from lms_interface.canvas_interface import (
+    CanvasAssignment,
+    CanvasCourse,
+    CanvasInterface,
+)
 from lms_interface.classes import FileSubmission__Canvas, TextSubmission__Canvas
 
 

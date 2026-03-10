@@ -266,6 +266,33 @@ def test_cleanup_missing_can_clear_placeholder_grade_in_dry_run():
   assert stats["placeholder_grade_clear_succeeded"] == 1
 
 
+def test_cleanup_missing_detects_placeholder_grade_without_clear_flag():
+  submission = FakeSubmission(
+    late_policy_status="none",
+    missing=False,
+  )
+  submission.grade = "0"
+  submission.posted_grade = "0"
+  submission.entered_grade = "0"
+  submission.score = 0
+  assignment = FakeAssignment(
+    assignment_id=71,
+    due_at="2026-03-01T00:00:00+00:00",
+    submissions_by_user={1071: submission},
+  )
+  course = FakeCourse([assignment], [FakeStudent(1071)])
+
+  stats = cleanup_missing_by_due_date(
+    course,
+    now=datetime(2026, 2, 16, tzinfo=timezone.utc),
+  )
+
+  assert submission.edit_calls == []
+  assert stats["placeholder_grade_needs_clear"] == 1
+  assert stats["placeholder_grade_clear_attempted"] == 0
+  assert stats["placeholder_grade_clear_succeeded"] == 0
+
+
 def test_cleanup_missing_skips_excused_submissions():
   submission = FakeSubmission(
     excused=True,

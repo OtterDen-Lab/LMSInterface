@@ -746,10 +746,26 @@ class CanvasAssignment(LMSWrapper):
     self.assignment = canvasapi_assignment
     super().__init__(_inner=canvasapi_assignment)
   
-  def push_feedback(self, user_id, score: float, comments: str, attachments=None, keep_previous_best=True, clobber_feedback=False):
+  def push_feedback(
+      self,
+      user_id,
+      score: float,
+      comments: str,
+      attachments=None,
+      keep_previous_best=True,
+      clobber_feedback=False,
+      seconds_late: int | None = None,
+  ):
     log.debug(f"Adding feedback for {user_id}")
     if attachments is None:
       attachments = []
+    if seconds_late is not None:
+      try:
+        seconds_late = int(seconds_late)
+      except (TypeError, ValueError) as exc:
+        raise ValueError("seconds_late must be an integer number of seconds.") from exc
+      if seconds_late < 0:
+        raise ValueError("seconds_late must be greater than or equal to 0.")
     
     # Get the previous score to check to see if we should reuse it
     try:
@@ -784,11 +800,14 @@ class CanvasAssignment(LMSWrapper):
       return False
     
     # Push feedback to canvas
-    submission.edit(
-      submission={
-        'posted_grade':score,
-      },
-    )
+    submission_payload = {
+      'posted_grade': score,
+    }
+    if seconds_late and seconds_late > 0:
+      submission_payload['late_policy_status'] = 'late'
+      submission_payload['seconds_late_override'] = seconds_late
+
+    submission.edit(submission=submission_payload)
     
     # If we should overwrite previous comments then remove all the previous submissions
     if clobber_feedback:

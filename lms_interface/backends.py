@@ -79,7 +79,8 @@ class CanvasAssignmentAdapter(LMSAssignment):
       comments: str,
       attachments=None,
       keep_previous_best: bool = True,
-      clobber_feedback: bool = False
+      clobber_feedback: bool = False,
+      seconds_late: int | None = None,
   ) -> bool | None:
     return self._assignment.push_feedback(
       user_id=user_id,
@@ -87,5 +88,6 @@ class CanvasAssignmentAdapter(LMSAssignment):
       comments=comments,
       attachments=attachments,
       keep_previous_best=keep_previous_best,
-      clobber_feedback=clobber_feedback
+      clobber_feedback=clobber_feedback,
+      seconds_late=seconds_late,
     )

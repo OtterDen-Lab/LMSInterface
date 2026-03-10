@@ -22,7 +22,8 @@ class LMSAssignment(Protocol):
       comments: str,
       attachments=None,
       keep_previous_best: bool = True,
-      clobber_feedback: bool = False
+      clobber_feedback: bool = False,
+      seconds_late: int | None = None,
   ) -> bool | None: ...
 
 
