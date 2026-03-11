@@ -10,6 +10,7 @@ import os
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+from canvasapi.exceptions import ResourceDoesNotExist
 
 from lms_interface.canvas_interface import CanvasAssignment, CanvasInterface
 
@@ -409,6 +410,81 @@ class TestCanvasAssignment:
                 comments="",
                 seconds_late=-1,
             )
+
+    def test_push_feedback_clobber_overwrites_lower_existing_grade(self, assignment):
+        previous_submission = Mock(score=55.0, submission_comments=[])
+        updated_submission = Mock(score=55.0, submission_comments=[])
+        assignment.assignment.get_submission.side_effect = [
+            previous_submission,
+            updated_submission,
+        ]
+
+        result = assignment.push_feedback(
+            user_id=42,
+            score=22.0,
+            comments="",
+            clobber_feedback=True,
+        )
+
+        assert result is True
+        assignment.assignment.submissions_bulk_update.assert_called_once_with(
+            grade_data={"submission[posted_grade]": 22.0},
+            student_ids=[42],
+        )
+        updated_submission.edit.assert_called_once_with(
+            submission={"posted_grade": 22.0},
+        )
+
+    def test_push_feedback_clobber_deletes_comments_with_canvasapi_endpoint(self, assignment):
+        assignment.canvas_interface.canvas = Mock()
+        assignment.canvas_interface.canvas._Canvas__requester = Mock()
+        assignment.canvas_interface.canvas._Canvas__requester.request.return_value = Mock(
+            status_code=200
+        )
+        previous_submission = Mock(score=None, submission_comments=[])
+        updated_submission = Mock(score=None, submission_comments=[{"id": 777}])
+        assignment.assignment.get_submission.side_effect = [
+            previous_submission,
+            updated_submission,
+        ]
+
+        result = assignment.push_feedback(
+            user_id=42,
+            score=88.5,
+            comments="",
+            clobber_feedback=True,
+        )
+
+        assert result is True
+        assignment.canvas_interface.canvas._Canvas__requester.request.assert_called_once_with(
+            "DELETE",
+            "courses/12345/assignments/67890/submissions/42/comments/777",
+        )
+
+    def test_push_feedback_clobber_ignores_missing_comment_delete(self, assignment):
+        assignment.canvas_interface.canvas = Mock()
+        assignment.canvas_interface.canvas._Canvas__requester = Mock()
+        assignment.canvas_interface.canvas._Canvas__requester.request.side_effect = (
+            ResourceDoesNotExist("Not Found")
+        )
+        previous_submission = Mock(score=None, submission_comments=[])
+        updated_submission = Mock(score=None, submission_comments=[{"id": 777}])
+        assignment.assignment.get_submission.side_effect = [
+            previous_submission,
+            updated_submission,
+        ]
+
+        result = assignment.push_feedback(
+            user_id=42,
+            score=88.5,
+            comments="",
+            clobber_feedback=True,
+        )
+
+        assert result is True
+        updated_submission.edit.assert_called_once_with(
+            submission={"posted_grade": 88.5},
+        )
 
 
 class TestFileSubmissionSecurity:

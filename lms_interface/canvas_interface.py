@@ -770,7 +770,13 @@ class CanvasAssignment(LMSWrapper):
     # Get the previous score to check to see if we should reuse it
     try:
       submission = self.assignment.get_submission(user_id)
-      if keep_previous_best and score is not None and submission.score is not None and submission.score > score:
+      if (
+          keep_previous_best
+          and not clobber_feedback
+          and score is not None
+          and submission.score is not None
+          and submission.score > score
+      ):
         log.warning(f"Current score ({submission.score}) higher than new score ({score}).  Going to use previous score.")
         score = submission.score
     except (requests.exceptions.RequestException, canvasapi.exceptions.CanvasException) as e:
@@ -817,8 +823,19 @@ class CanvasAssignment(LMSWrapper):
         comment_id = comment['id']
         
         # Construct the URL to delete the comment
-        api_path = f"/api/v1/courses/{self.canvas_course.course.id}/assignments/{self.assignment.id}/submissions/{user_id}/comments/{comment_id}"
-        response = self.canvas_interface.canvas._Canvas__requester.request("DELETE", api_path)
+        api_path = (
+          f"courses/{self.canvas_course.course.id}/assignments/{self.assignment.id}"
+          f"/submissions/{user_id}/comments/{comment_id}"
+        )
+        try:
+          response = self.canvas_interface.canvas._Canvas__requester.request("DELETE", api_path)
+        except canvasapi.exceptions.ResourceDoesNotExist:
+          log.warning(f"Comment {comment_id} no longer exists; skipping clobber delete.")
+          continue
+        except canvasapi.exceptions.CanvasException as e:
+          log.warning(f"Failed to delete comment {comment_id}: {e}")
+          continue
+
         if response.status_code == 200:
           log.info(f"Deleted comment {comment_id}")
         else:
