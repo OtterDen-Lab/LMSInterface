@@ -17,7 +17,7 @@ dependencies = [
     "canvasapi>=3.2,<4",
     "requests>=2.32.4,<3",
     "python-dotenv>=1,<2",
-    "PyYAML>=6,<7",
+    "pyyaml>=6,<7",
     "pytest>=8.4.2",
 ]
 

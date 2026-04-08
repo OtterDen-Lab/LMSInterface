@@ -9,7 +9,7 @@ import threading
 from dataclasses import dataclass
 
 from .classes import Submission
-from .interfaces import LMSAssignment, LMSBackend, LMSCourse, LMSUser
+from .interfaces import LMSAssignment, LMSBackend, LMSCourse, LMSUser, RubricAssessment
 
 log = logging.getLogger(__name__)
 
@@ -262,12 +262,13 @@ class PrivacyAssignmentAdapter(LMSAssignment):
   def push_feedback(
       self,
       user_id,
-      score: float,
+      score: float | None,
       comments: str,
       attachments=None,
       keep_previous_best: bool = True,
       clobber_feedback: bool = False,
       seconds_late: int | None = None,
+      rubric_assessment: RubricAssessment | None = None,
   ) -> None:
     self._assignment.push_feedback(
       user_id=user_id,
@@ -277,4 +278,5 @@ class PrivacyAssignmentAdapter(LMSAssignment):
       keep_previous_best=keep_previous_best,
       clobber_feedback=clobber_feedback,
       seconds_late=seconds_late,
+      rubric_assessment=rubric_assessment,
     )

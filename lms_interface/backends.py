@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .canvas_interface import CanvasAssignment, CanvasCourse, CanvasInterface
-from .interfaces import LMSAssignment, LMSBackend, LMSCourse
+from .interfaces import LMSAssignment, LMSBackend, LMSCourse, RubricAssessment
 
 
 class CanvasBackend(LMSBackend):
@@ -75,12 +75,13 @@ class CanvasAssignmentAdapter(LMSAssignment):
   def push_feedback(
       self,
       user_id,
-      score: float,
+      score: float | None,
       comments: str,
       attachments=None,
       keep_previous_best: bool = True,
       clobber_feedback: bool = False,
       seconds_late: int | None = None,
+      rubric_assessment: RubricAssessment | None = None,
   ) -> bool | None:
     return self._assignment.push_feedback(
       user_id=user_id,
@@ -90,4 +91,5 @@ class CanvasAssignmentAdapter(LMSAssignment):
       keep_previous_best=keep_previous_best,
       clobber_feedback=clobber_feedback,
       seconds_late=seconds_late,
+      rubric_assessment=rubric_assessment,
     )

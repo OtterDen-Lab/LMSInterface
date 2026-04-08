@@ -61,6 +61,34 @@ Recommended rollout:
 3. Run course-wide with `--dry-run`.
 4. Run course-wide live.
 
+## Manual Grade Test Harness
+
+Use `test.py` for one-off grading against a real Canvas submission while you
+are validating rubric behavior or feedback formatting.
+
+Example:
+
+```bash
+python test.py grade \
+  --course-id <COURSE_ID> \
+  --assignment-id <ASSIGNMENT_ID> \
+  --student-id <STUDENT_ID> \
+  --score 8 \
+  --comments "Well done." \
+  --rubric-assessment '{"criterion 1": 5, "crit2": {"points": 3, "rating_id": "rat3"}}'
+```
+
+Useful notes:
+
+- `--rubric-assessment` accepts either inline JSON/YAML or a path to a file
+  containing an object.
+- Rubric keys should be the exact criterion names shown in Canvas, such as
+  `criterion 1` and `crit2` in the example above.
+- If you omit `--score`, the Canvas wrapper derives the posted grade from the
+  rubric points total.
+- This command posts feedback to an existing assignment. It does not create or
+  attach rubrics to assignments.
+
 ## Course Plan Helper
 
 Generate a student-facing calendar (HTML + JSON) from a course plan YAML and

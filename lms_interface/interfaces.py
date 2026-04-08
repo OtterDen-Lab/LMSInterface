@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Mapping, Protocol
 
 from .classes import Submission
+
+RubricAssessment = dict[str, float | int | Mapping[str, Any]]
 
 
 class LMSUser(Protocol):
@@ -18,12 +20,13 @@ class LMSAssignment(Protocol):
   def push_feedback(
       self,
       user_id,
-      score: float,
+      score: float | None,
       comments: str,
       attachments=None,
       keep_previous_best: bool = True,
       clobber_feedback: bool = False,
       seconds_late: int | None = None,
+      rubric_assessment: RubricAssessment | None = None,
   ) -> bool | None: ...
 
 

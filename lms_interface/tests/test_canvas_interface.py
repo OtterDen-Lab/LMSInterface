@@ -382,6 +382,76 @@ class TestCanvasAssignment:
             submission={"posted_grade": 88.5},
         )
 
+    def test_push_feedback_accepts_rubric_assessment_and_derives_score(self, assignment):
+        submission = Mock(score=None, submission_comments=[])
+        assignment.assignment.get_submission.return_value = submission
+        assignment.assignment.rubric = [
+            {
+                "id": "crit1",
+                "description": "criterion 1",
+                "points": 5,
+                "ratings": [
+                    {"id": "rat1", "description": "Perfect", "points": 5},
+                    {"id": "rat2", "description": "No Evidence", "points": 0},
+                ],
+            },
+            {
+                "id": "crit2",
+                "description": "crit2",
+                "points": 3,
+                "ratings": [
+                    {"id": "rat3", "description": "Exceeds", "points": 3},
+                    {"id": "rat4", "description": "No Evidence", "points": 0},
+                ],
+            },
+        ]
+
+        result = assignment.push_feedback(
+            user_id=42,
+            score=None,
+            comments="",
+            rubric_assessment={
+                "criterion 1": 5,
+                "crit2": {
+                    "points": 3,
+                    "rating_id": "rat3",
+                    "comments": "Well done.",
+                },
+            },
+        )
+
+        assert result is True
+        assignment.assignment.submissions_bulk_update.assert_called_once_with(
+            grade_data={"submission[posted_grade]": 8.0},
+            student_ids=[42],
+        )
+        submission.edit.assert_called_once_with(
+            submission={
+                "posted_grade": 8.0,
+            },
+            rubric_assessment={
+                "crit1": {"points": 5},
+                "crit2": {
+                    "points": 3,
+                    "rating_id": "rat3",
+                    "comments": "Well done.",
+                },
+            },
+        )
+
+    def test_push_feedback_rejects_unknown_rubric_criterion(self, assignment):
+        assignment.assignment.rubric = [
+            {"id": "crit1", "description": "criterion 1", "points": 5},
+        ]
+
+        with pytest.raises(ValueError, match="not found on assignment"):
+            assignment.push_feedback(
+                user_id=42,
+                score=5,
+                comments="",
+                rubric_assessment={"missing criterion": 4},
+            )
+
     def test_push_feedback_with_positive_seconds_late_marks_submission_late(self, assignment):
         submission = Mock(score=None, submission_comments=[])
         assignment.assignment.get_submission.return_value = submission

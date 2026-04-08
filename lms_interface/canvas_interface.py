@@ -30,6 +30,7 @@ from .classes import (
   Submission__Canvas,
   TextSubmission__Canvas,
 )
+from .interfaces import RubricAssessment
 from .privacy import PrivacyContext
 
 log = logging.getLogger(__name__)
@@ -103,6 +104,86 @@ def _compute_retry_delay_seconds(
   jitter_window = max(0.0, base_delay * retry_backoff_jitter_ratio)
   jittered = base_delay + random.uniform(-jitter_window, jitter_window)
   return max(0.0, min(jittered, retry_backoff_max))
+
+
+def _normalize_rubric_assessment(
+    rubric_assessment: RubricAssessment | None,
+) -> dict[str, dict[str, object]]:
+  if rubric_assessment is None:
+    return {}
+
+  normalized: dict[str, dict[str, object]] = {}
+  for criterion_id, assessment in rubric_assessment.items():
+    criterion_key = str(criterion_id)
+    if isinstance(assessment, dict):
+      normalized[criterion_key] = dict(assessment)
+    else:
+      normalized[criterion_key] = {"points": assessment}
+  return normalized
+
+
+def _normalize_rubric_lookup_key(value: object) -> str:
+  return re.sub(r"\s+", " ", str(value or "").strip())
+
+
+def _rubric_items(
+    rubric: object,
+) -> list[dict[str, object]]:
+  if isinstance(rubric, list):
+    return [item for item in rubric if isinstance(item, dict)]
+  if isinstance(rubric, dict):
+    return [item for item in rubric.values() if isinstance(item, dict)]
+  return []
+
+
+def _build_rubric_criterion_index(
+    rubric: object,
+) -> dict[str, str]:
+  index: dict[str, str] = {}
+  for criterion in _rubric_items(rubric):
+    criterion_id = _normalize_rubric_lookup_key(criterion.get("id"))
+    if not criterion_id:
+      continue
+    index[criterion_id] = criterion_id
+
+    criterion_name = _normalize_rubric_lookup_key(criterion.get("description"))
+    if not criterion_name:
+      continue
+    existing = index.get(criterion_name)
+    if existing is not None and existing != criterion_id:
+      raise ValueError(
+        f"Rubric criterion name '{criterion_name}' is ambiguous across ids "
+        f"'{existing}' and '{criterion_id}'."
+      )
+    index[criterion_name] = criterion_id
+  return index
+
+
+def _log_rubric_debug(rubric: object, *, prefix: str) -> None:
+  if not log.isEnabledFor(logging.DEBUG):
+    return
+  rubric_items = _rubric_items(rubric)
+  log.debug("%s rubric item count=%s", prefix, len(rubric_items))
+
+
+def _rubric_assessment_total(
+    rubric_assessment: dict[str, dict[str, object]],
+) -> float | None:
+  if not rubric_assessment:
+    return None
+
+  total = 0.0
+  saw_points = False
+  for assessment in rubric_assessment.values():
+    points = assessment.get("points")
+    if points is None:
+      continue
+    try:
+      total += float(points)
+      saw_points = True
+    except (TypeError, ValueError):
+      continue
+  return total if saw_points else None
 
 
 
@@ -744,21 +825,124 @@ class CanvasAssignment(LMSWrapper):
     self.canvas_interface = canvasapi_interface
     self.canvas_course = canvasapi_course
     self.assignment = canvasapi_assignment
+    self._rubric_cache: list[dict[str, object]] | None = None
+    self._rubric_criterion_index: dict[str, str] | None = None
     super().__init__(_inner=canvasapi_assignment)
-  
+
+  def _get_assignment_rubric(self) -> list[dict[str, object]]:
+    if self._rubric_cache is not None:
+      _log_rubric_debug(self._rubric_cache, prefix="cached")
+      return self._rubric_cache
+
+    rubric = getattr(self.assignment, "rubric", None)
+    _log_rubric_debug(rubric, prefix="assignment")
+    rubric_items = _rubric_items(rubric)
+    if rubric_items:
+      self._rubric_cache = rubric_items
+      return self._rubric_cache
+
+    try:
+      refreshed_assignment = self.canvas_course.course.get_assignment(
+        self.assignment.id,
+        include=["rubric"],
+      )
+    except (requests.exceptions.RequestException, canvasapi.exceptions.CanvasException) as exc:
+      log.debug(f"Could not refresh rubric for assignment {self.assignment.id}: {exc}")
+      self._rubric_cache = []
+      return self._rubric_cache
+
+    rubric_items = _rubric_items(getattr(refreshed_assignment, "rubric", None))
+    _log_rubric_debug(rubric_items, prefix="refreshed")
+    self._rubric_cache = rubric_items
+    return self._rubric_cache
+
+  def _get_rubric_criterion_index(self) -> dict[str, str]:
+    if self._rubric_criterion_index is not None:
+      return self._rubric_criterion_index
+
+    rubric = self._get_assignment_rubric()
+    if not rubric:
+      self._rubric_criterion_index = {}
+      return self._rubric_criterion_index
+
+    self._rubric_criterion_index = _build_rubric_criterion_index(rubric)
+    return self._rubric_criterion_index
+
+  def resolve_rubric_assessment(
+      self,
+      rubric_assessment: RubricAssessment | None,
+  ) -> dict[str, dict[str, object]]:
+    normalized = _normalize_rubric_assessment(rubric_assessment)
+    if not normalized:
+      return {}
+
+    rubric_index = self._get_rubric_criterion_index()
+    if not rubric_index:
+      raise ValueError(
+        f"Assignment {self.assignment.id} does not have an attached rubric."
+      )
+    rubric = self._get_assignment_rubric()
+    if log.isEnabledFor(logging.DEBUG):
+      log.debug(
+          "Rubric lookup index for assignment %s has %s entries",
+          self.assignment.id,
+          len(rubric_index),
+      )
+
+    resolved: dict[str, dict[str, object]] = {}
+    for criterion_key, assessment in normalized.items():
+      lookup_key = _normalize_rubric_lookup_key(criterion_key)
+      if log.isEnabledFor(logging.DEBUG):
+        log.debug(
+            "Resolving rubric criterion key=%r normalized=%r assessment=%r",
+            criterion_key,
+            lookup_key,
+            assessment,
+        )
+      criterion_id = rubric_index.get(lookup_key)
+      if criterion_id is None:
+        available_names: list[str] = []
+        for criterion in rubric:
+          criterion_name = _normalize_rubric_lookup_key(criterion.get("description"))
+          if criterion_name:
+            available_names.append(criterion_name)
+            continue
+          criterion_id_value = _normalize_rubric_lookup_key(criterion.get("id"))
+          if criterion_id_value:
+            available_names.append(criterion_id_value)
+        raise ValueError(
+          f"Rubric criterion '{criterion_key}' was not found on assignment "
+          f"{self.assignment.id}. Available criteria: {', '.join(available_names)}"
+        )
+      if log.isEnabledFor(logging.DEBUG):
+        log.debug(
+            "Matched rubric criterion key=%r to criterion_id=%r",
+            criterion_key,
+            criterion_id,
+        )
+      resolved[criterion_id] = assessment
+    return resolved
+
   def push_feedback(
       self,
       user_id,
-      score: float,
+      score: float | None,
       comments: str,
       attachments=None,
       keep_previous_best=True,
       clobber_feedback=False,
       seconds_late: int | None = None,
+      rubric_assessment: RubricAssessment | None = None,
   ):
     log.debug(f"Adding feedback for {user_id}")
     if attachments is None:
       attachments = []
+    rubric_assessment_payload = self.resolve_rubric_assessment(rubric_assessment)
+    resolved_score = score
+    if resolved_score is None:
+      resolved_score = _rubric_assessment_total(rubric_assessment_payload)
+    if resolved_score is None and not rubric_assessment_payload:
+      raise ValueError("score is required unless rubric_assessment is provided.")
     if seconds_late is not None:
       try:
         seconds_late = int(seconds_late)
@@ -773,28 +957,29 @@ class CanvasAssignment(LMSWrapper):
       if (
           keep_previous_best
           and not clobber_feedback
-          and score is not None
+          and resolved_score is not None
           and submission.score is not None
-          and submission.score > score
+          and submission.score > resolved_score
       ):
-        log.warning(f"Current score ({submission.score}) higher than new score ({score}).  Going to use previous score.")
-        score = submission.score
+        log.warning(f"Current score ({submission.score}) higher than new score ({resolved_score}).  Going to use previous score.")
+        resolved_score = submission.score
     except (requests.exceptions.RequestException, canvasapi.exceptions.CanvasException) as e:
       log.warning(f"No previous submission found for {user_id}: {e}")
       extra = _format_canvas_exception(e)
       if extra:
         log.warning(extra)
     
-    # Update the assignment
-    # Note: the bulk_update will create a submission if none exists
     try:
-      self.assignment.submissions_bulk_update(
-        grade_data={
-          'submission[posted_grade]' : score
-        },
-        student_ids=[user_id]
-      )
-      
+      if resolved_score is not None:
+        # Update the assignment.
+        # Note: the bulk_update will create a submission if none exists.
+        self.assignment.submissions_bulk_update(
+          grade_data={
+            'submission[posted_grade]' : resolved_score
+          },
+          student_ids=[user_id]
+        )
+
       submission = self.assignment.get_submission(user_id)
     except (requests.exceptions.RequestException, canvasapi.exceptions.CanvasException) as e:
       log.error(e)
@@ -806,14 +991,27 @@ class CanvasAssignment(LMSWrapper):
       return False
     
     # Push feedback to canvas
-    submission_payload = {
-      'posted_grade': score,
-    }
+    submission_payload = {}
+    if resolved_score is not None:
+      submission_payload['posted_grade'] = resolved_score
     if seconds_late and seconds_late > 0:
       submission_payload['late_policy_status'] = 'late'
       submission_payload['seconds_late_override'] = seconds_late
 
-    submission.edit(submission=submission_payload)
+    if submission_payload:
+      if rubric_assessment_payload:
+        if log.isEnabledFor(logging.DEBUG):
+          log.debug(
+              "Submitting rubric assessment for assignment %s with %s criteria",
+              self.assignment.id,
+              len(rubric_assessment_payload),
+          )
+        submission.edit(
+            submission=submission_payload,
+            rubric_assessment=rubric_assessment_payload,
+        )
+      else:
+        submission.edit(submission=submission_payload)
     
     # If we should overwrite previous comments then remove all the previous submissions
     if clobber_feedback:
