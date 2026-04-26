@@ -8,6 +8,10 @@ from typing import Any, List
 
 import canvasapi
 
+from lms_interface.cleanup_missing_ui import (
+    AssignmentCleanupSummary,
+    CleanupMissingReporter,
+)
 from lms_interface.canvas_interface import (
     CanvasAssignment,
     CanvasCourse,
@@ -252,6 +256,7 @@ def cleanup_missing_by_due_date(
     force_clear_stale_missing: bool = True,
     clear_placeholder_grade: bool = False,
     now: datetime | None = None,
+    reporter: CleanupMissingReporter | None = None,
 ) -> dict[str, int]:
     """
     Normalize late policy status for *unsubmitted* work:
@@ -305,31 +310,48 @@ def cleanup_missing_by_due_date(
     stats["students_available"] = len(students)
     if limit is not None:
         students = students[:limit]
-    assignments = list(
-        canvas_course.get_assignments(include=["all_dates"], order_by="name")
-    )
+    assignments = [
+        assignment
+        for assignment in canvas_course.get_assignments(
+            include=["all_dates"], order_by="name"
+        )
+        if (assignment_id is None or assignment.id == assignment_id)
+        and (include_unpublished or getattr(assignment, "published", True))
+    ]
 
     total_assignments = len(assignments)
+    if reporter is not None:
+        reporter.start(
+            total_assignments=total_assignments,
+            total_students=stats["students_available"],
+            student_limit=stats["student_limit"],
+        )
+
     for assignment_index, assignment in enumerate(assignments, start=1):
-        if assignment_id is not None and assignment.id != assignment_id:
-            continue
-        if not include_unpublished and not getattr(assignment, "published", True):
-            continue
         stats["assignments_considered"] += 1
         assignment_updates_to_missing = 0
         assignment_updates_to_none = 0
         assignment_unchanged = 0
         assignment_skipped_excused = 0
         assignment_skipped_submitted = 0
+        assignment_skipped_existing_grade = 0
         assignment_skipped_no_due_date = 0
         assignment_errors = 0
         assignment_unsubmitted = 0
 
         assignment_name = getattr(assignment, "name", f"assignment_{assignment.id}")
-        log.info(
-            f"[{assignment_index}/{total_assignments}] Checking assignment "
-            f"{assignment.id} ({assignment_name})"
-        )
+        if reporter is not None:
+            reporter.set_current_assignment(
+                index=assignment_index,
+                total=total_assignments,
+                assignment_id=assignment.id,
+                assignment_name=assignment_name,
+            )
+        else:
+            log.info(
+                f"[{assignment_index}/{total_assignments}] Checking assignment "
+                f"{assignment.id} ({assignment_name})"
+            )
 
         for student in students:
             user_id = student.user_id
@@ -360,6 +382,7 @@ def cleanup_missing_by_due_date(
 
             if _submission_has_non_placeholder_grade(submission):
                 stats["skipped_existing_grade"] += 1
+                assignment_skipped_existing_grade += 1
                 log.debug(
                     f"Skipping assignment={assignment.id} user={user_id}: "
                     "submission already has a non-placeholder grade"
@@ -499,17 +522,36 @@ def cleanup_missing_by_due_date(
                 stats["updated_to_none"] += 1
                 assignment_updates_to_none += 1
 
-        log.info(
-            f"[{assignment_index}/{total_assignments}] assignment={assignment.id} summary: "
-            f"unsubmitted={assignment_unsubmitted}, "
-            f"updated_to_missing={assignment_updates_to_missing}, "
-            f"updated_to_none={assignment_updates_to_none}, "
-            f"unchanged={assignment_unchanged}, "
-            f"skipped_excused={assignment_skipped_excused}, "
-            f"skipped_submitted={assignment_skipped_submitted}, "
-            f"skipped_no_due_date={assignment_skipped_no_due_date}, "
-            f"errors={assignment_errors}"
+        summary = AssignmentCleanupSummary(
+            index=assignment_index,
+            total=total_assignments,
+            assignment_id=assignment.id,
+            assignment_name=assignment_name,
+            unsubmitted=assignment_unsubmitted,
+            updated_to_missing=assignment_updates_to_missing,
+            updated_to_none=assignment_updates_to_none,
+            unchanged=assignment_unchanged,
+            skipped_excused=assignment_skipped_excused,
+            skipped_submitted=assignment_skipped_submitted,
+            skipped_existing_grade=assignment_skipped_existing_grade,
+            skipped_no_due_date=assignment_skipped_no_due_date,
+            errors=assignment_errors,
         )
+        if reporter is not None:
+            reporter.add_assignment_summary(summary)
+        else:
+            log.info(
+                f"[{assignment_index}/{total_assignments}] assignment={assignment.id} summary: "
+                f"unsubmitted={assignment_unsubmitted}, "
+                f"updated_to_missing={assignment_updates_to_missing}, "
+                f"updated_to_none={assignment_updates_to_none}, "
+                f"unchanged={assignment_unchanged}, "
+                f"skipped_excused={assignment_skipped_excused}, "
+                f"skipped_submitted={assignment_skipped_submitted}, "
+                f"skipped_existing_grade={assignment_skipped_existing_grade}, "
+                f"skipped_no_due_date={assignment_skipped_no_due_date}, "
+                f"errors={assignment_errors}"
+            )
 
     if stats["placeholder_grade_needs_clear"] > 0 and not clear_placeholder_grade:
         log.warning(
@@ -517,6 +559,9 @@ def cleanup_missing_by_due_date(
             "placeholder submissions with stale grade values (e.g., 0/Incomplete). "
             "Re-run with --clear-placeholder-grade to clear those grades."
         )
+
+    if reporter is not None:
+        reporter.finish(stats)
 
     return stats
 
@@ -617,6 +662,11 @@ def main():
         "--clear-placeholder-grade",
         action="store_true",
         help="Attempt to clear stale placeholder grades (e.g., Incomplete/0) on future-due, no-content submissions",
+    )
+    parser.add_argument(
+        "--plain-output",
+        action="store_true",
+        help="Disable the live terminal UI and print plain text summaries instead",
     )
     parser.add_argument(
         "--yaml-path", help="Path to course plan YAML file (required for plan-course)"
@@ -720,18 +770,22 @@ def main():
         clear_out_missing(canvas_course)
 
     elif helper_func_name == "cleanup_missing_by_due_date":
-        stats = cleanup_missing_by_due_date(
-            canvas_course,
-            dry_run=args.dry_run,
-            include_unpublished=args.include_unpublished,
-            assignment_id=args.assignment_id,
-            limit=args.limit,
-            force_clear_stale_missing=not args.no_force_clear_stale_missing,
-            clear_placeholder_grade=args.clear_placeholder_grade,
+        reporter = CleanupMissingReporter(
+            live=False if args.plain_output else None,
         )
-        log.info(f"cleanup-missing summary (dry_run={args.dry_run}):")
-        for key, value in stats.items():
-            log.info(f"  {key}: {value}")
+        try:
+            cleanup_missing_by_due_date(
+                canvas_course,
+                dry_run=args.dry_run,
+                include_unpublished=args.include_unpublished,
+                assignment_id=args.assignment_id,
+                limit=args.limit,
+                force_clear_stale_missing=not args.no_force_clear_stale_missing,
+                clear_placeholder_grade=args.clear_placeholder_grade,
+                reporter=reporter,
+            )
+        finally:
+            reporter.close()
 
     elif helper_func_name == "deprecate_assignment":
         deprecate_assignment(canvas_course, args.assignment_id)

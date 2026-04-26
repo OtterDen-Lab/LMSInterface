@@ -35,6 +35,10 @@ Use `cleanup-missing` to normalize Canvas late-policy status for unsubmitted wor
 The helper can also clear stale placeholder grades (`Incomplete`/`0`) on future-due,
 contentless placeholder submissions.
 
+When run in an interactive terminal, the helper now shows a live progress view
+with the current assignment and a running results table. Use `--plain-output` if
+you want the older plain text behavior.
+
 Run via module:
 
 ```bash

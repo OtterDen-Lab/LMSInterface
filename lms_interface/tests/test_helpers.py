@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+from io import StringIO
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from lms_interface.cleanup_missing_ui import (
+  AssignmentCleanupSummary,
+  CleanupMissingReporter,
+)
 from lms_interface.helpers import (
   _parse_canvas_datetime,
   cleanup_missing_by_due_date,
@@ -373,3 +378,44 @@ def test_cleanup_missing_limit_processes_only_first_n_students():
   assert stats["students_available"] == 3
   assert stats["student_limit"] == 2
   assert stats["students_considered"] == 2
+
+
+def test_cleanup_missing_reporter_renders_final_table():
+  stream = StringIO()
+  reporter = CleanupMissingReporter(stream=stream, live=False)
+  reporter.start(total_assignments=1, total_students=1, student_limit=0)
+  reporter.add_assignment_summary(
+    AssignmentCleanupSummary(
+      index=1,
+      total=1,
+      assignment_id=42,
+      assignment_name="Project 1",
+      unsubmitted=3,
+      updated_to_missing=2,
+      updated_to_none=1,
+      unchanged=0,
+      skipped_excused=0,
+      skipped_submitted=0,
+      skipped_existing_grade=0,
+      skipped_no_due_date=0,
+      errors=0,
+    )
+  )
+  reporter.finish(
+    {
+      "assignments_considered": 1,
+      "students_considered": 1,
+      "unsubmitted_considered": 3,
+      "updated_to_missing": 2,
+      "updated_to_none": 1,
+      "skipped_existing_grade": 0,
+      "errors": 0,
+    }
+  )
+
+  output = stream.getvalue()
+  assert "cleanup-missing" in output
+  assert "Columns:" in output
+  assert "ETA" in output
+  assert "Project 1" in output
+  assert "TOTAL" in output
