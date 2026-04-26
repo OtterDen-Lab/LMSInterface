@@ -21,6 +21,10 @@ class FakeSubmission:
       workflow_state: str = "unsubmitted",
       submitted_at=None,
       late_policy_status: str | None = "none",
+      grade: str | None = None,
+      posted_grade: str | None = None,
+      entered_grade: str | None = None,
+      score=None,
       cached_due_date: str | None = None,
       due_at: str | None = None,
       submission_type: str | None = None,
@@ -34,6 +38,10 @@ class FakeSubmission:
     self.workflow_state = workflow_state
     self.submitted_at = submitted_at
     self.late_policy_status = late_policy_status
+    self.grade = grade
+    self.posted_grade = posted_grade
+    self.entered_grade = entered_grade
+    self.score = score
     self.cached_due_date = cached_due_date
     self.due_at = due_at
     self.submission_type = submission_type
@@ -149,6 +157,31 @@ def test_cleanup_missing_skips_submitted_work():
   assert submission.edit_calls == []
   assert stats["skipped_submitted"] == 1
   assert stats["submitted_with_content"] == 1
+
+
+def test_cleanup_missing_skips_rows_with_existing_grade():
+  submission = FakeSubmission(
+    late_policy_status="none",
+    grade="A",
+    posted_grade="A",
+    entered_grade="A",
+    score=95,
+  )
+  assignment = FakeAssignment(
+    assignment_id=30,
+    due_at="2026-02-01T00:00:00+00:00",
+    submissions_by_user={1030: submission},
+  )
+  course = FakeCourse([assignment], [FakeStudent(1030)])
+
+  stats = cleanup_missing_by_due_date(
+    course,
+    now=datetime(2026, 2, 16, tzinfo=timezone.utc),
+  )
+
+  assert submission.edit_calls == []
+  assert stats["skipped_existing_grade"] == 1
+  assert stats["updated_to_missing"] == 0
 
 
 def test_cleanup_missing_treats_contentless_submitted_as_placeholder():

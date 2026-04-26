@@ -217,6 +217,31 @@ def _placeholder_grade_needs_clear(submission: canvasapi.submission.Submission) 
     return False
 
 
+def _submission_has_non_placeholder_grade(
+    submission: canvasapi.submission.Submission,
+) -> bool:
+    grade = _normalize_grade(getattr(submission, "grade", None))
+    posted_grade = _normalize_grade(getattr(submission, "posted_grade", None))
+    entered_grade = _normalize_grade(getattr(submission, "entered_grade", None))
+    score = getattr(submission, "score", None)
+
+    grade_tokens = {grade, posted_grade, entered_grade}
+    if any(
+        token
+        and token not in {"incomplete", "fail", "f", "0", "0.0", "0.00"}
+        for token in grade_tokens
+    ):
+        return True
+
+    try:
+        if score is not None:
+            return float(score) != 0.0
+    except Exception:
+        pass
+
+    return False
+
+
 def cleanup_missing_by_due_date(
     canvas_course: CanvasCourse,
     *,
@@ -257,6 +282,7 @@ def cleanup_missing_by_due_date(
         "missing_flag_true": 0,
         "missing_flag_false": 0,
         "submitted_with_content": 0,
+        "skipped_existing_grade": 0,
         "placeholder_without_content": 0,
         "placeholder_grade_needs_clear": 0,
         "placeholder_grade_clear_attempted": 0,
@@ -330,6 +356,14 @@ def cleanup_missing_by_due_date(
                 stats["skipped_submitted"] += 1
                 stats["submitted_with_content"] += 1
                 assignment_skipped_submitted += 1
+                continue
+
+            if _submission_has_non_placeholder_grade(submission):
+                stats["skipped_existing_grade"] += 1
+                log.debug(
+                    f"Skipping assignment={assignment.id} user={user_id}: "
+                    "submission already has a non-placeholder grade"
+                )
                 continue
 
             workflow_state = (
