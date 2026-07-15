@@ -970,7 +970,7 @@ class CanvasAssignment(LMSWrapper):
         log.warning(extra)
     
     try:
-      if resolved_score is not None:
+      if resolved_score is not None and seconds_late is None:
         # Update the assignment.
         # Note: the bulk_update will create a submission if none exists.
         self.assignment.submissions_bulk_update(
@@ -994,9 +994,10 @@ class CanvasAssignment(LMSWrapper):
     submission_payload = {}
     if resolved_score is not None:
       submission_payload['posted_grade'] = resolved_score
-    if seconds_late and seconds_late > 0:
-      submission_payload['late_policy_status'] = 'late'
+    if seconds_late is not None:
       submission_payload['seconds_late_override'] = seconds_late
+      if seconds_late > 0:
+        submission_payload['late_policy_status'] = 'late'
 
     if submission_payload:
       if rubric_assessment_payload:

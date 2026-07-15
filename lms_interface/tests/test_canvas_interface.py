@@ -362,7 +362,7 @@ class TestCanvasAssignment:
             canvasapi_assignment=mock_assignment,
         )
 
-    def test_push_feedback_without_seconds_late_omits_late_fields(self, assignment):
+    def test_push_feedback_with_zero_seconds_late_uses_single_edit(self, assignment):
         submission = Mock(score=None, submission_comments=[])
         assignment.assignment.get_submission.return_value = submission
 
@@ -371,6 +371,25 @@ class TestCanvasAssignment:
             score=88.5,
             comments="",
             seconds_late=0,
+        )
+
+        assert result is True
+        submission.edit.assert_called_once_with(
+            submission={
+                "posted_grade": 88.5,
+                "seconds_late_override": 0,
+            },
+        )
+        assignment.assignment.submissions_bulk_update.assert_not_called()
+
+    def test_push_feedback_without_seconds_late_uses_bulk_update(self, assignment):
+        submission = Mock(score=None, submission_comments=[])
+        assignment.assignment.get_submission.return_value = submission
+
+        result = assignment.push_feedback(
+            user_id=42,
+            score=88.5,
+            comments="",
         )
 
         assert result is True
@@ -421,10 +440,6 @@ class TestCanvasAssignment:
         )
 
         assert result is True
-        assignment.assignment.submissions_bulk_update.assert_called_once_with(
-            grade_data={"submission[posted_grade]": 8.0},
-            student_ids=[42],
-        )
         submission.edit.assert_called_once_with(
             submission={
                 "posted_grade": 8.0,
@@ -471,6 +486,7 @@ class TestCanvasAssignment:
                 "seconds_late_override": 3600,
             },
         )
+        assignment.assignment.submissions_bulk_update.assert_not_called()
 
     def test_push_feedback_rejects_negative_seconds_late(self, assignment):
         with pytest.raises(ValueError, match="greater than or equal to 0"):
