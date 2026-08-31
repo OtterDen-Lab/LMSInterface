@@ -1,0 +1,95 @@
+# Peer Review Rubric — ML Lab Report Evaluation
+# Likert scale: 1 = terrible/strongly disagree, 4 = excellent/strongly agree (no neutral midpoint)
+# Each student reviews 3 peer reports.
+
+pdfs:
+  - "report.pdf"
+# Each PDF receives at least three reviews. Each eligible student receives at least
+# one distinct PDF and no more than three.
+min_reviews_per_submission: 3
+min_reviews_per_student: 1
+reviews_per_student: 3
+points_possible: 1
+# Keep beta batches unpublished until an instructor has reviewed them.
+published: false
+unlock_at: "2026-09-01T08:00:00-07:00"
+due_at: "2026-09-08T23:59:00-07:00"
+lock_at: "2026-09-09T00:00:00-07:00"
+rubric:
+  name: "PA1 Peer Review"
+  version: 1
+  likert_scale:
+    min: 1
+    max: 4
+    labels:
+      1: "Strongly Disagree / Terrible"
+      2: "Disagree / Weak"
+      3: "Agree / Good"
+      4: "Strongly Agree / Excellent"
+
+  sections:
+    - section: "Quantitative Items"
+      questions:
+        - id: likert_questions_asked
+          type: likert
+          prompt: "The questions this report investigates require the dataset and experiments to answer — they couldn't be answered without running anything."
+
+        - id: likert_engineering_decisions
+          type: likert
+          prompt: "The author explains why they made specific design choices (architecture, hyperparameters, preprocessing), not just what they chose."
+
+        - id: likert_reproducibility
+          type: likert
+          prompt: "Based on the details given in this report, I am confident I could reproduce this experiment myself."
+
+        - id: likert_evidence_claim_linkage
+          type: likert
+          prompt: "The claims made in the text are backed up by the plots/results shown — I didn't notice claims without evidence."
+
+        - id: likert_plot_quality
+          type: likert
+          prompt: "The plots are easy to read (labeled axes, legible, appropriate chart type) and directly support the arguments being made."
+
+        - id: likert_clarity_of_writing
+          type: likert
+          prompt: "The report is clear and concise — I didn't have to re-read sections to understand what was being said."
+
+        - id: likert_length_scope
+          type: likert
+          prompt: "Each section stays roughly within the suggested word count and doesn't pad or under-develop the content."
+
+    - section: "Comprehension Check"
+      note: "Not scored. Intended to be completed before the reviewer sees their own Likert responses. Surfaces report clarity independent of judging author understanding."
+      questions:
+        - id: comprehension_summary
+          type: short_response
+          prompt: "In 1-2 sentences, summarize the model/approach this report describes, in your own words."
+          scored: false
+          visible_to_author: false  # TBD once quiz-generation service is built
+
+    - section: "Qualitative Feedback"
+      note: "Feedback-to-author visibility TBD once the quiz-generation service is built; likely reviewer-only for now."
+      questions:
+        - id: freetext_liked
+          type: short_response
+          prompt: "What's one thing you genuinely liked about this report?"
+          purpose: "validation for the author"
+          visible_to_author: true  # TBD
+
+        - id: freetext_confused_fix
+          type: short_response
+          prompt: "Where did you get confused, and what do you think would fix it?"
+          purpose: "actionable feedback, paired complaint + fix"
+          visible_to_author: true  # TBD
+
+        - id: freetext_would_write_myself
+          type: short_response
+          prompt: "What's one sentence or explanation from this report you'd want to be able to write yourself?"
+          purpose: "craft-focused self-improvement for the reviewer"
+          visible_to_author: true  # TBD
+
+        - id: freetext_next_experiment
+          type: short_response
+          prompt: "What's one experiment or question you'd want to run next, building on this report?"
+          purpose: "generative thinking about the dataset, not just the report"
+          visible_to_author: true  # TBD

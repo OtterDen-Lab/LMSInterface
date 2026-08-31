@@ -614,6 +614,7 @@ def main():
         "deprecate": ("deprecate_assignment", True),
         "ungraded": ("mark_future_assignments_as_ungraded", False),
         "plan-course": ("plan_course", False),
+        "peer-review": ("peer_review", False),
     }
 
     parser = argparse.ArgumentParser(
@@ -669,7 +670,15 @@ def main():
         help="Disable the live terminal UI and print plain text summaries instead",
     )
     parser.add_argument(
-        "--yaml-path", help="Path to course plan YAML file (required for plan-course)"
+        "--yaml-path", help="Path to YAML file (required for plan-course and peer-review)"
+    )
+    parser.add_argument(
+        "--source-assignment-id",
+        type=int,
+        help="Use PDF attachments from this Canvas assignment (peer-review)",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=0, help="Deterministic allocation seed (peer-review)"
     )
     parser.add_argument(
         "--output-dir",
@@ -726,8 +735,8 @@ def main():
         parser.error(f"--assignment-id is required for '{args.helper}'")
     if args.limit is not None and args.limit < 1:
         parser.error("--limit must be >= 1")
-    if helper_func_name == "plan_course" and not args.yaml_path:
-        parser.error("--yaml-path is required for 'plan-course'")
+    if helper_func_name in {"plan_course", "peer_review"} and not args.yaml_path:
+        parser.error(f"--yaml-path is required for '{args.helper}'")
     if (
         helper_func_name == "plan_course"
         and (
@@ -793,6 +802,17 @@ def main():
 
     elif helper_func_name == "mark_future_assignments_as_ungraded":
         mark_future_assignments_as_ungraded(canvas_course)
+
+    elif helper_func_name == "peer_review":
+        from lms_interface.peer_review import create_peer_reviews
+
+        create_peer_reviews(
+            canvas_course,
+            config_path=Path(args.yaml_path),
+            source_assignment_id=args.source_assignment_id,
+            seed=args.seed,
+            dry_run=args.dry_run,
+        )
 
     elif helper_func_name == "plan_course":
         from lms_interface.course_plan import build_course_calendar

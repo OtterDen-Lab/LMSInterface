@@ -1,0 +1,322 @@
+topics:
+
+# =========================
+# Foundations + PyTorch
+# =========================
+
+- id: dl-intro
+  title: What is Deep Learning?
+  readings:
+    - https://d2l.ai/chapter_introduction/index.html
+  brief_description: >
+    High-level overview of deep learning and its applications.
+  learning_objectives:
+    - Explain what distinguishes deep learning from traditional ML
+    - Identify common types of DL tasks (vision, NLP, etc.)
+    - Describe the input-output structure of a DL system
+    - Recognize when DL is appropriate vs not
+  supplementary_objectives:
+    - Discuss ethical or societal implications of DL systems
+  suggested_homework:
+    - Identify real-world applications and describe input/output structure
+  notes: Set expectations and connect to student intuition
+
+- id: linear-algebra-refresh
+  title: Linear Algebra for DL
+  readings:
+    - https://d2l.ai/chapter_preliminaries/linear-algebra.html
+  brief_description: >
+    Core linear algebra concepts used in DL.
+  learning_objectives:
+    - Compute dot products and matrix multiplications
+    - Interpret vector and matrix shapes in code
+    - Explain how matrix multiplication represents function composition
+    - Translate between mathematical and code representations
+  suggested_homework:
+    - Implement matrix multiply with NumPy/PyTorch
+  notes: Keep applied
+
+- id: pytorch-intro
+  title: Tensors and Autograd
+  readings:
+    - https://d2l.ai/chapter_preliminaries/pytorch.html
+  brief_description: >
+    PyTorch tensors, operations, and automatic differentiation.
+  learning_objectives:
+    - Create and manipulate tensors in PyTorch
+    - Compute gradients using autograd
+    - Explain what a computational graph represents
+    - Identify which operations are tracked for gradients
+  suggested_homework:
+    - Compute gradients of simple functions
+  notes: Emphasize gradient tracking intuition
+
+- id: linear-regression
+  title: Linear Regression from Scratch
+  readings:
+    - https://d2l.ai/chapter_linear-networks/linear-regression-scratch.html
+  brief_description: >
+    Build a simple model end-to-end.
+  learning_objectives:
+    - Implement a full training loop
+    - Define loss functions and evaluate model performance
+    - Update parameters using gradient-based rules
+    - Interpret learned weights
+  suggested_homework:
+    - Implement full regression model
+  notes: First full pipeline
+
+- id: mlp-intro
+  title: Multilayer Perceptrons
+  readings:
+    - https://d2l.ai/chapter_multilayer-perceptrons/mlp.html
+  brief_description: >
+    Extend linear models to nonlinear networks.
+  learning_objectives:
+    - Explain why nonlinearities are required
+    - Implement an MLP in PyTorch
+    - Compare performance to linear models
+    - Analyze effect of hidden layer size
+  suggested_homework:
+    - Build and tune MLP
+  notes: Treat training as black box initially
+
+- id: training-without-gradients
+  title: Why Random Search Fails
+  readings: []
+  brief_description: >
+    Explore inefficient training methods.
+  learning_objectives:
+    - Evaluate random search as an optimization strategy
+    - Identify inefficiencies in naive parameter tuning
+    - Compare heuristic vs systematic training methods
+  suggested_homework:
+    - Compare random vs structured updates
+  notes: Create need for gradients
+
+# =========================
+# Backprop + Optimization
+# =========================
+
+- id: gradients-intuition
+  title: Gradients and Derivatives
+  readings:
+    - https://d2l.ai/chapter_preliminaries/calculus.html
+  learning_objectives:
+    - Interpret derivatives as rates of change
+    - Compute gradients numerically
+    - Explain how gradients guide optimization
+  suggested_homework:
+    - Compare numerical vs analytic gradients
+
+- id: backprop
+  title: Backpropagation
+  readings:
+    - https://d2l.ai/chapter_multilayer-perceptrons/backprop.html
+  learning_objectives:
+    - Apply the chain rule to neural networks
+    - Trace gradient flow through layers
+    - Implement backprop for a small network
+    - Diagnose gradient-related issues
+  supplementary_objectives:
+    - Relate backprop to computational graphs
+  suggested_homework:
+    - Implement backprop manually
+  notes: Core concept
+
+- id: optimization
+  title: Optimization Algorithms
+  readings:
+    - https://d2l.ai/chapter_optimization/sgd.html
+  learning_objectives:
+    - Compare SGD, momentum, and Adam
+    - Explain convergence behavior
+    - Select appropriate optimizer for a task
+  suggested_homework:
+    - Benchmark optimizers
+
+- id: regularization
+  title: Regularization and Generalization
+  readings:
+    - https://d2l.ai/chapter_multilayer-perceptrons/weight-decay.html
+  learning_objectives:
+    - Identify overfitting vs underfitting
+    - Apply weight decay and dropout
+    - Evaluate generalization performance
+  suggested_homework:
+    - Fix overfitting in a model
+
+# =========================
+# CNNs
+# =========================
+
+- id: cnn-intuition
+  title: Convolutions and Locality
+  readings:
+    - https://d2l.ai/chapter_convolutional-neural-networks/why-conv.html
+  learning_objectives:
+    - Explain spatial locality in images
+    - Describe convolution operation conceptually
+    - Compare dense vs convolutional layers
+  suggested_homework:
+    - Visualize filters
+
+- id: cnn-implementation
+  title: CNNs in Practice
+  readings:
+    - https://d2l.ai/chapter_convolutional-neural-networks/lenet.html
+  learning_objectives:
+    - Implement CNN in PyTorch
+    - Train model on image dataset
+    - Evaluate classification performance
+  suggested_homework:
+    - Train CNN on MNIST/CIFAR
+
+- id: cnn-training
+  title: Improving CNN Performance
+  readings:
+    - https://d2l.ai/chapter_convolutional-modern/batch-norm.html
+  learning_objectives:
+    - Explain batch normalization
+    - Apply data augmentation
+    - Improve training stability
+  suggested_homework:
+    - Compare training setups
+
+# =========================
+# Sequences
+# =========================
+
+- id: sequence-models
+  title: Sequence Modeling Basics
+  readings:
+    - https://d2l.ai/chapter_recurrent-neural-networks/index.html
+  learning_objectives:
+    - Describe sequential data dependencies
+    - Formulate sequence prediction problems
+  suggested_homework:
+    - Build simple sequence predictor
+
+- id: rnns
+  title: RNNs and Their Limits
+  readings:
+    - https://d2l.ai/chapter_recurrent-neural-networks/rnn.html
+  learning_objectives:
+    - Implement RNN architecture
+    - Identify vanishing/exploding gradients
+    - Explain limitations of RNNs
+  suggested_homework:
+    - Train RNN and observe issues
+  notes: Transition to attention
+
+# =========================
+# Transformers
+# =========================
+
+- id: attention
+  title: Attention Mechanisms
+  readings:
+    - https://d2l.ai/chapter_attention-mechanisms/index.html
+  learning_objectives:
+    - Explain attention as weighted aggregation
+    - Compute attention scores
+    - Interpret attention outputs
+  suggested_homework:
+    - Implement attention
+
+- id: transformers
+  title: Transformer Architecture
+  readings:
+    - https://d2l.ai/chapter_attention-mechanisms/transformer.html
+  learning_objectives:
+    - Describe transformer components
+    - Implement a transformer block
+    - Compare to RNNs
+  suggested_homework:
+    - Build mini-transformer
+
+- id: transformer-training
+  title: Training Transformers
+  readings: []
+  learning_objectives:
+    - Identify challenges in transformer training
+    - Explain computational cost of attention
+  suggested_homework:
+    - Train small transformer
+
+# =========================
+# LLM Concepts
+# =========================
+
+- id: llm-scaling
+  title: Scaling and Large Models
+  readings: []
+  learning_objectives:
+    - Explain scaling laws conceptually
+    - Describe role of data and compute
+    - Analyze tradeoffs in model size
+  suggested_homework:
+    - Conceptual analysis
+
+- id: llm-pipeline
+  title: LLM Training Pipeline
+  readings: []
+  learning_objectives:
+    - Explain tokenization and embeddings
+    - Describe pretraining and fine-tuning
+    - Identify key components of LLM pipeline
+  suggested_homework:
+    - Explore embeddings
+
+# =========================
+# Reinforcement Learning
+# =========================
+
+- id: rl-intro
+  title: Reinforcement Learning Basics
+  readings: []
+  learning_objectives:
+    - Define MDP components
+    - Explain reward-based learning
+    - Compare RL to supervised learning
+  suggested_homework:
+    - Solve toy RL problem
+
+- id: q-learning
+  title: Q-Learning and DQN
+  readings: []
+  learning_objectives:
+    - Explain Q-learning update rule
+    - Implement simple DQN
+    - Evaluate policy performance
+  suggested_homework:
+    - Train RL agent
+
+# =========================
+# Project
+# =========================
+
+- id: project-intro
+  title: Final Project Kickoff
+  learning_objectives:
+    - Define a DL problem
+    - Select appropriate model
+    - Plan evaluation strategy
+  suggested_homework:
+    - Proposal
+
+- id: project-work
+  title: Project Work Session
+  learning_objectives:
+    - Implement chosen model
+    - Debug and refine approach
+    - Analyze intermediate results
+  suggested_homework:
+    - Progress report
+
+- id: project-presentations
+  title: Project Presentations
+  learning_objectives:
+    - Communicate technical results clearly
+    - Interpret model performance
+    - Reflect on limitations and improvements

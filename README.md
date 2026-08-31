@@ -251,3 +251,36 @@ dependencies = [
   "lms-interface @ https://github.com/<org>/LMSInterface/releases/download/v0.4.5/lms_interface-0.4.5-py3-none-any.whl",
 ]
 ```
+
+## Peer-Review Surveys
+
+Create one restricted Canvas graded survey per PDF, with a shared YAML rubric and
+randomized student assignments:
+
+```bash
+lms-interface-helper peer-review --course-id <COURSE_ID> \
+  --yaml-path example_files/peer-review-questions.yaml --dry-run
+```
+
+Remove `--dry-run` to create the surveys. The beta deliberately creates a new
+batch on every live run. The YAML requires `unlock_at`, `due_at`, and `lock_at`;
+`points_possible` defaults to 1, `published` defaults to `false`, and
+`reviews_per_student` is a per-reviewer cap (default 3). Each PDF receives at least
+three reviews by default, and every eligible reviewer receives at least one distinct
+PDF when possible. Configure `min_reviews_per_submission` and
+`min_reviews_per_student` to override those minimums.
+
+For submitted reports, use the source assignment instead of the `pdfs` list:
+
+```bash
+lms-interface-helper peer-review --course-id <COURSE_ID> \
+  --source-assignment-id <ASSIGNMENT_ID> --yaml-path peer-review.yaml
+```
+
+The helper takes the first PDF attachment from each source submission and never
+assigns a student their own submission. Local `pdfs` remain available for debug
+runs. Use `--seed` to reproduce a randomized allocation.
+
+Peer-review YAML ignores legacy section `note` fields. Use `instructions` on the
+rubric (shown above the PDF) or on a section (shown under that section heading)
+for student-facing guidance.
