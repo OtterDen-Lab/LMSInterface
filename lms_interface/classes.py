@@ -39,7 +39,7 @@ ALLOWED_CONTENT_TYPES_BY_EXTENSION = {
   ".hpp": C_FAMILY_CONTENT_TYPES,
   ".hxx": C_FAMILY_CONTENT_TYPES,
   ".hh": C_FAMILY_CONTENT_TYPES,
-  ".py": {"text/plain", "text/x-python", "application/octet-stream"},
+  ".py": {"text/plain", "text/x-python", "application/octet-stream", "text/x-python-script", "application/x-python-code"},
   ".java": {"text/plain", "text/x-java-source", "application/octet-stream"},
   ".js": {"text/plain", "application/javascript", "text/javascript", "application/octet-stream"},
   ".ts": {"text/plain", "application/typescript", "application/octet-stream"},

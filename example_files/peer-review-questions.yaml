@@ -72,7 +72,7 @@ rubric:
       questions:
         - id: freetext_liked
           type: short_response
-          prompt: "What's one thing you genuinely liked about this report?"
+          prompt: "What was a part of the report that you think was particularly well stated or made a particularly convincing argument?"
           purpose: "validation for the author"
           visible_to_author: true  # TBD
 
@@ -84,7 +84,7 @@ rubric:
 
         - id: freetext_would_write_myself
           type: short_response
-          prompt: "What's one sentence or explanation from this report you'd want to be able to write yourself?"
+          prompt: "After reading this report, are there any parts of your report that you think you'd change or approach differently?"
           purpose: "craft-focused self-improvement for the reviewer"
           visible_to_author: true  # TBD
 
