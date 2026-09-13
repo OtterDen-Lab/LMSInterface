@@ -207,44 +207,6 @@ wheels = [
 ]
 
 [[package]]
-name = "lms-interface"
-version = "0.7.1"
-source = { editable = "." }
-dependencies = [
-    { name = "canvasapi" },
-    { name = "pytest" },
-    { name = "python-dotenv" },
-    { name = "pyyaml" },
-    { name = "requests" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "black" },
-    { name = "flake8" },
-    { name = "jsonschema" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "black", marker = "extra == 'dev'" },
-    { name = "canvasapi", specifier = ">=3.2,<4" },
-    { name = "flake8", marker = "extra == 'dev'" },
-    { name = "jsonschema", marker = "extra == 'dev'" },
-    { name = "mypy", marker = "extra == 'dev'" },
-    { name = "pytest", specifier = ">=8.4.2" },
-    { name = "pytest", marker = "extra == 'dev'" },
-    { name = "python-dotenv", specifier = ">=1,<2" },
-    { name = "pyyaml", specifier = ">=6,<7" },
-    { name = "requests", specifier = ">=2.32.4,<3" },
-    { name = "ruff", marker = "extra == 'dev'" },
-]
-provides-extras = ["dev"]
-
-[[package]]
 name = "mccabe"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -293,6 +255,42 @@ sdist = { url = "https://files.pythonhosted.org/packages/a2/6e/371856a3fb9d31ca8
 wheels = [
     { url = "https://files.pythonhosted.org/packages/79/7b/2c79738432f5c924bef5071f933bcc9efd0473bac3b4aa584a6f7c1c8df8/mypy_extensions-1.1.0-py3-none-any.whl", hash = "sha256:1be4cccdb0f2482337c4743e60421de3a356cd97508abadd57d47403e94f5505", size = 4963, upload-time = "2025-04-22T14:54:22.983Z" },
 ]
+
+[[package]]
+name = "otterden-lms-interface"
+version = "0.7.2"
+source = { editable = "." }
+dependencies = [
+    { name = "canvasapi" },
+    { name = "python-dotenv" },
+    { name = "pyyaml" },
+    { name = "requests" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "black" },
+    { name = "flake8" },
+    { name = "jsonschema" },
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "black", marker = "extra == 'dev'" },
+    { name = "canvasapi", specifier = ">=3.2,<4" },
+    { name = "flake8", marker = "extra == 'dev'" },
+    { name = "jsonschema", marker = "extra == 'dev'" },
+    { name = "mypy", marker = "extra == 'dev'" },
+    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "python-dotenv", specifier = ">=1,<2" },
+    { name = "pyyaml", specifier = ">=6,<7" },
+    { name = "requests", specifier = ">=2.32.4,<3" },
+    { name = "ruff", marker = "extra == 'dev'" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "packaging"
