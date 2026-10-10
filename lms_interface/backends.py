@@ -70,6 +70,7 @@ class CanvasAssignmentAdapter(LMSAssignment):
     return getattr(self._assignment.assignment, "name", None)
 
   def get_submissions(self, **kwargs):
+    print("\n\n\n\n\nGET submissions\n\n\n\n\n\n")
     return self._assignment.get_submissions(**kwargs)
 
   def push_feedback(

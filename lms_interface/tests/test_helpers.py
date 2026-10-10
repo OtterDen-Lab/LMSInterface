@@ -11,6 +11,7 @@ from lms_interface.cleanup_missing_ui import (
 from lms_interface.helpers import (
   _parse_canvas_datetime,
   cleanup_missing_by_due_date,
+  get_quiz_results,
 )
 
 
@@ -419,3 +420,70 @@ def test_cleanup_missing_reporter_renders_final_table():
   assert "ETA" in output
   assert "Project 1" in output
   assert "TOTAL" in output
+
+
+def test_get_quiz_results_downloads_student_analysis_and_numbers_likert_values(
+    tmp_path, monkeypatch
+):
+  class FakeReport:
+    id = 78
+
+    def __init__(self, file=None, progress=None):
+      self.file = file
+      self.progress = progress
+
+  class FakeQuiz:
+    def __init__(self):
+      self.id = 12
+      self.title = "Peer Review"
+      self.quiz_type = "graded_survey"
+
+    def create_report(self, report_type):
+      assert report_type == "student_analysis"
+      return FakeReport()
+
+    def get_quiz_report(self, report_id):
+      assert report_id == 78
+      return FakeReport(file={"url": "https://canvas.example.test/report.csv"})
+
+    def get_questions(self):
+      question = type("Question", (), {})()
+      question.question_type = "multiple_choice_question"
+      question.answers = [
+        {"answer_text": "Strongly Disagree / Terrible"},
+        {"answer_text": "Disagree / Weak"},
+        {"answer_text": "Agree / Good"},
+        {"answer_text": "Strongly Agree / Excellent"},
+      ]
+      return [question]
+
+  class FakeResponse:
+    content = (
+      b"Student,Question 1,Feedback\n"
+      b"Reviewer,Agree / Good,Helpful explanation\n"
+    )
+
+    def raise_for_status(self):
+      return None
+
+  monkeypatch.setattr(
+    "lms_interface.quiz_reports.requests.get", lambda *args, **kwargs: FakeResponse()
+  )
+
+  quiz = FakeQuiz()
+  course = type(
+    "Course",
+    (),
+    {
+      "course": type("ApiCourse", (), {"get_quiz": lambda self, quiz_id: quiz})(),
+      "canvas_interface": type("CanvasInterface", (), {"canvas_key": "key"})(),
+    },
+  )()
+  output_path = tmp_path / "quiz-results.csv"
+
+  count = get_quiz_results(course, 12, output_path)
+
+  assert count == 1
+  assert output_path.read_text() == (
+    "Student,Question 1,Feedback\nReviewer,3,Helpful explanation\n"
+  )

@@ -284,3 +284,29 @@ runs. Use `--seed` to reproduce a randomized allocation.
 Peer-review YAML ignores legacy section `note` fields. Use `instructions` on the
 rubric (shown above the PDF) or on a section (shown under that section heading)
 for student-facing guidance.
+
+### Export peer-review results
+
+Export one CSV row per peer-review survey response by giving any
+assignment ID from the peer-review batch. The helper derives its assignment
+group, so instructors do not need to find a Canvas assignment-group ID:
+
+```bash
+lms-interface-helper peer-review-summary --course-id <COURSE_ID> \
+  --quiz-id <PEER_REVIEW_QUIZ_ID> \
+  --source-assignment-id <ORIGINAL_PDF_ASSIGNMENT_ID> \
+  --yaml-path peer-review.yaml \
+  --output peer-review-results.csv
+```
+
+The CSV includes the PDF ID embedded in each generated quiz title, the reviewer
+and source-submitter IDs, submission metadata, and one column per rubric
+question. `--source-assignment-id` is optional, but it resolves each PDF ID back
+to its original submitter. `--assignment-id` also works when you have the
+backing Canvas assignment ID; for convenience it falls back to treating an
+unknown assignment ID as a Classic Quiz ID. You can instead select a batch with
+`--assignment-group-name`; if multiple groups match, the helper prints every
+matching group and assignment so the next run can use an unambiguous assignment
+ID or `--assignment-group-id`. Supply the same peer-review YAML with
+`--yaml-path` to give the result columns their stable rubric question IDs instead
+of Canvas's localized question labels.

@@ -7,12 +7,60 @@ They verify the logic of the canvas_interface module without network calls.
 
 import io
 import os
+from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 from canvasapi.exceptions import ResourceDoesNotExist
 
 from lms_interface.canvas_interface import CanvasAssignment, CanvasInterface
+
+
+def test_quiz_submissions_keep_answers_when_text_only_question_has_no_answer():
+    from lms_interface.canvas_interface import CanvasQuiz
+
+    answered_question = SimpleNamespace(
+        id=1,
+        question_name="clarity",
+        question_text="Is it clear?",
+        question_type="multiple_choice_question",
+        points_possible=0,
+    )
+    text_only_question = SimpleNamespace(
+        id=2,
+        question_name="Instructions",
+        question_text="Read the PDF.",
+        question_type="text_only_question",
+        points_possible=0,
+    )
+    canvas_submission = SimpleNamespace(
+        user_id=7,
+        workflow_state="complete",
+        get_submission_questions=lambda **kwargs: [answered_question, text_only_question],
+        get_submission_events=lambda **kwargs: [
+            SimpleNamespace(
+                event_type="question_answered",
+                event_data=[{"quiz_question_id": 1, "answer": 4}],
+            )
+        ],
+    )
+    canvas_quiz = SimpleNamespace(get_submissions=lambda **kwargs: [canvas_submission])
+    canvas_course = SimpleNamespace(
+        canvas_interface=SimpleNamespace(privacy_mode="none"),
+        get_username=lambda user_id: "Reviewer",
+        get_user=lambda user_id: SimpleNamespace(id=user_id),
+        _apply_privacy=lambda student, raw_name: student,
+    )
+
+    submissions = CanvasQuiz(
+        canvas_interface=canvas_course.canvas_interface,
+        canvasapi_course=canvas_course,
+        canvasapi_quiz=canvas_quiz,
+    ).get_quiz_submissions()
+
+    assert len(submissions) == 1
+    assert submissions[0].get_response(1)["answer"] == 4
+    assert submissions[0].get_response(2)["answer"] is None
 
 
 class TestCanvasInterfaceCredentials:

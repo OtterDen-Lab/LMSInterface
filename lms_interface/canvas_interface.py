@@ -1093,6 +1093,8 @@ class CanvasAssignment(LMSWrapper):
     :param kwargs:
     :return:
     """
+
+    print("\n\n\n\nget_submissions (canvas assignment)\n\n\n")
     
     if "limit" in kwargs and kwargs["limit"] is not None:
       limit = kwargs["limit"]
@@ -1203,6 +1205,7 @@ class CanvasQuiz(LMSWrapper):
     super().__init__(_inner=canvasapi_quiz)
 
   def get_quiz_submissions(self, **kwargs) -> list[QuizSubmission]:
+    print("\n\n\nGET QUIZ SUBMISSIONS\n\n\n")
     """
     Get all quiz submissions with student responses
     :param kwargs: Additional parameters for filtering
@@ -1215,6 +1218,23 @@ class CanvasQuiz(LMSWrapper):
 
     # Get all quiz submissions
     for student_index, canvasapi_quiz_submission in enumerate(self.quiz.get_submissions(**kwargs)):
+
+      # The list endpoint can return a reduced quiz-submission object. Fetch the
+      # individual resource as well; some Canvas deployments expose additional
+      # submission state only from this endpoint.
+      detailed_submission = canvasapi_quiz_submission
+      try:
+        detailed_submission = self.quiz.get_quiz_submission(
+          canvasapi_quiz_submission.id,
+          attempt=getattr(canvasapi_quiz_submission, 'attempt', None),
+          include=['submission', 'quiz', 'user', 'answers'],
+        )
+      except Exception as exc:
+        log.debug(
+          "Could not retrieve detailed quiz submission %s: %s",
+          getattr(canvasapi_quiz_submission, 'id', 'unknown'),
+          exc,
+        )
 
       # Get the student object for the submission
       try:
@@ -1245,34 +1265,95 @@ class CanvasQuiz(LMSWrapper):
 
       # Get detailed submission responses
       try:
-        submission_questions = canvasapi_quiz_submission.get_submission_questions()
+        submission_questions = detailed_submission.get_submission_questions(
+          include=['quiz_question']
+        )
 
         # Convert to our format: question_id -> response
         student_responses = {}
         quiz_questions = {}
 
+        unanswered_question_ids = set()
+        direct_answer_count = 0
+        event_answer_count = 0
         for question in submission_questions:
           question_id = question.id
+          answer = getattr(question, 'answer', None)
+          question_type = getattr(question, 'question_type', 'unknown')
+          if answer is None and question_type != 'text_only_question':
+            unanswered_question_ids.add(str(question_id))
+          elif answer not in (None, ''):
+            direct_answer_count += 1
           student_responses[question_id] = {
-            'answer': question.answer,
+            # Canvas omits ``answer`` from structural text-only questions.
+            # Treat that as an unanswered question rather than discarding the
+            # reviewer's entire submission.
+            'answer': answer,
             'correct': getattr(question, 'correct', None),
             'points': getattr(question, 'points', 0),
-            'question_type': getattr(question, 'question_type', 'unknown')
+            'question_type': question_type
           }
 
           # Store question metadata
           quiz_questions[question_id] = {
             'question_name': getattr(question, 'question_name', ''),
             'question_text': getattr(question, 'question_text', ''),
-            'question_type': getattr(question, 'question_type', 'unknown'),
+            'question_type': question_type,
             'points_possible': getattr(question, 'points_possible', 0)
           }
+
+        # Canvas sometimes omits ``answer`` from the submission-question API
+        # for instructor views of Classic graded surveys. Quiz-log events retain
+        # those answers when quiz-log auditing is enabled, so use them only as a
+        # fallback for fields Canvas left out.
+        if unanswered_question_ids:
+          try:
+            for event in detailed_submission.get_submission_events(
+                attempt=getattr(detailed_submission, 'attempt', None)
+            ):
+              if getattr(event, 'event_type', None) != 'question_answered':
+                continue
+              event_data = getattr(event, 'event_data', None)
+              event_entries = event_data if isinstance(event_data, list) else [event_data]
+              for event_entry in event_entries:
+                if not isinstance(event_entry, dict) or 'answer' not in event_entry:
+                  continue
+                event_question_id = event_entry.get(
+                  'quiz_question_id', event_entry.get('question_id')
+                )
+                if str(event_question_id) not in unanswered_question_ids:
+                  continue
+                student_responses[int(event_question_id)]['answer'] = event_entry['answer']
+                if event_entry['answer'] not in (None, ''):
+                  event_answer_count += 1
+          except Exception as exc:
+            log.debug(
+              "Could not retrieve quiz-log answer fallback for submission %s: %s",
+              getattr(detailed_submission, 'id', 'unknown'),
+              exc,
+            )
+        log.debug(
+          "Quiz submission %s: %d direct answers, %d event-log answers, "
+          "question fields=%s",
+          getattr(detailed_submission, 'id', 'unknown'),
+          direct_answer_count,
+          event_answer_count,
+          sorted(
+            key for key in vars(submission_questions[0])
+            if not key.startswith('_')
+          ) if submission_questions else [],
+        )
 
         # Create QuizSubmission object
         quiz_submission = QuizSubmission(
           student=student,
-          status=Submission.Status.from_string(canvasapi_quiz_submission.workflow_state, canvasapi_quiz_submission.percentage_score),
-          quiz_submission_data=canvasapi_quiz_submission,
+          # Graded surveys collect feedback but do not consistently expose a
+          # percentage score in Canvas's quiz-submission response.
+          status=Submission.Status.from_string(
+            detailed_submission.workflow_state,
+            getattr(detailed_submission, 'percentage_score', None),
+          ),
+          quiz_submission_data=detailed_submission,
           student_responses=student_responses,
           quiz_questions=quiz_questions
         )

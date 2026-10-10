@@ -1,6 +1,8 @@
 #!env python
 
 import argparse
+import csv
+import io
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +18,12 @@ from lms_interface.canvas_interface import (
     CanvasAssignment,
     CanvasCourse,
     CanvasInterface,
+)
+from lms_interface.quiz_reports import (
+    convert_likert_values,
+    download_quiz_report_csv,
+    quiz_likert_values,
+    wait_for_quiz_report,
 )
 
 # Configure logging to actually output
@@ -39,6 +47,26 @@ def delete_empty_folders(canvas_course: CanvasCourse):
                 f'({num_processed}) : "{f}" (not deleted) ({len(list(f.get_files()))})'
             )
         num_processed += 1
+
+
+def get_quiz_results(
+    canvas_course: CanvasCourse,
+    quiz_id: int,
+    output_path: Path | None = None,
+) -> int:
+    """Generate, download, and print a normalized Canvas student-analysis report."""
+    quiz = canvas_course.course.get_quiz(quiz_id)
+    report = quiz.create_report("student_analysis")
+    report = wait_for_quiz_report(quiz, report)
+    csv_text = download_quiz_report_csv(canvas_course, report)
+    normalized_csv = convert_likert_values(csv_text, quiz_likert_values(quiz))
+
+    if output_path is None:
+        print(normalized_csv, end="")
+    else:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(normalized_csv)
+    return sum(1 for _ in csv.DictReader(io.StringIO(normalized_csv)))
 
 
 def get_closed_assignments(
@@ -615,6 +643,8 @@ def main():
         "ungraded": ("mark_future_assignments_as_ungraded", False),
         "plan-course": ("plan_course", False),
         "peer-review": ("peer_review", False),
+        "peer-review-summary": ("peer_review_summary", False),
+        "get-quiz-results": ("get_quiz_results", False),
     }
 
     parser = argparse.ArgumentParser(
@@ -628,7 +658,12 @@ def main():
     parser.add_argument(
         "--assignment-id",
         type=int,
-        help="Canvas assignment ID (required for deprecate/unsubmitted, optional for cleanup-missing)",
+        help="Canvas assignment ID (or a Classic Quiz ID for peer-review-summary)",
+    )
+    parser.add_argument(
+        "--quiz-id",
+        type=int,
+        help="Classic Canvas quiz ID that selects a peer-review-summary batch",
     )
     parser.add_argument(
         "--limit",
@@ -675,7 +710,21 @@ def main():
     parser.add_argument(
         "--source-assignment-id",
         type=int,
-        help="Use PDF attachments from this Canvas assignment (peer-review)",
+        help="Use PDF attachments from this Canvas assignment (peer-review/peer-review-summary)",
+    )
+    parser.add_argument(
+        "--assignment-group-id",
+        type=int,
+        help="Canvas assignment group ID (peer-review-summary)",
+    )
+    parser.add_argument(
+        "--assignment-group-name",
+        help="Exact Canvas assignment group name (peer-review-summary)",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="Output path (peer-review-summary or get-quiz-results)",
     )
     parser.add_argument(
         "--seed", type=int, default=0, help="Deterministic allocation seed (peer-review)"
@@ -737,6 +786,8 @@ def main():
         parser.error("--limit must be >= 1")
     if helper_func_name in {"plan_course", "peer_review"} and not args.yaml_path:
         parser.error(f"--yaml-path is required for '{args.helper}'")
+    if helper_func_name == "get_quiz_results" and args.quiz_id is None:
+        parser.error("--quiz-id is required for 'get-quiz-results'")
     if (
         helper_func_name == "plan_course"
         and (
@@ -813,6 +864,42 @@ def main():
             seed=args.seed,
             dry_run=args.dry_run,
         )
+
+    elif helper_func_name == "peer_review_summary":
+        from lms_interface.peer_review import (
+            PeerReviewSummaryError,
+            export_peer_review_summary,
+        )
+
+        try:
+            row_count = export_peer_review_summary(
+                canvas_course,
+                output_path=args.output or Path("peer-review-results.csv"),
+                assignment_id=args.assignment_id,
+                quiz_id=args.quiz_id,
+                assignment_group_id=args.assignment_group_id,
+                assignment_group_name=args.assignment_group_name,
+                source_assignment_id=args.source_assignment_id,
+                rubric_config_path=Path(args.yaml_path) if args.yaml_path else None,
+            )
+        except PeerReviewSummaryError as exc:
+            parser.error(str(exc))
+        log.info(
+            "Exported %d peer-review response rows to %s",
+            row_count,
+            args.output or Path("peer-review-results.csv"),
+        )
+
+    elif helper_func_name == "get_quiz_results":
+        count = get_quiz_results(
+            canvas_course,
+            args.quiz_id,
+            args.output,
+        )
+        if args.output:
+            log.info("Exported %d student-analysis response rows to %s", count, args.output)
+        else:
+            log.info("Printed %d student-analysis response rows", count)
 
     elif helper_func_name == "plan_course":
         from lms_interface.course_plan import build_course_calendar

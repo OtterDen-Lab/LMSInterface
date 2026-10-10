@@ -253,6 +253,7 @@ class PrivacyAssignmentAdapter(LMSAssignment):
     )
 
   def get_submissions(self, **kwargs) -> list[Submission]:
+    print("\n\n\n\nget_submissions (privacy)\n\n\n")
     submissions = self._assignment.get_submissions(**kwargs)
     for submission in submissions:
       if getattr(submission, "student", None) is not None:
