@@ -717,9 +717,9 @@ def _peer_score(value: str) -> float | None:
 
 
 def _select_instructor_review_pdfs(
-    rows: list[dict[str, str]], likert_question_ids: list[str]
+    rows: list[dict[str, str]], likert_question_ids: list[str], *, seed: int
 ) -> list[tuple[str, str, str]]:
-    """Choose low, middle, and high scored papers for independent review."""
+    """Choose low, middle, high, and two random papers for instructor review."""
     scores_by_pdf: dict[str, list[float]] = {}
     review_counts: dict[str, int] = {}
     submitter_ids: dict[str, str] = {}
@@ -773,6 +773,12 @@ def _select_instructor_review_pdfs(
         ]
     middle = min(middle_candidates, key=lambda item: (abs(item[0] - overall_median), item[1]))
     selected.append((*middle, "middle"))
+    selected_pdf_ids.add(middle[1])
+
+    remaining = [candidate for candidate in aggregated if candidate[1] not in selected_pdf_ids]
+    random_count = min(2, len(remaining))
+    for candidate in random.Random(seed).sample(remaining, random_count):
+        selected.append((*candidate, "random"))
     return [(pdf_id, submitter_id, bucket) for _, pdf_id, submitter_id, _, bucket in selected]
 
 
@@ -819,7 +825,9 @@ def create_peer_review_workspace(
     with summary_path.open(encoding="utf-8-sig", newline="") as summary_file:
         summary_rows = list(csv.DictReader(summary_file))
     question_ids, likert_question_ids = _rubric_question_ids_by_type(rubric_config_path)
-    selected = _select_instructor_review_pdfs(summary_rows, likert_question_ids)
+    selected = _select_instructor_review_pdfs(
+        summary_rows, likert_question_ids, seed=seed
+    )
     documents_by_id = {document.short_digest: document for document in documents}
 
     pdf_dir = work_dir / "selected-pdfs"
@@ -867,6 +875,7 @@ def create_peer_review_workspace(
             "low_count": 1,
             "middle_count": 1,
             "high_count": 1,
+            "random_count": sum(bucket == "random" for _, _, bucket in selected),
             "minimum_reviews_for_middle": 2,
             "selected_pdf_ids": [pdf_id for pdf_id, _, _ in selected],
             "shuffle_seed": seed,
@@ -1136,6 +1145,13 @@ def finalize_peer_review_workspace(work_dir: Path) -> dict[str, Path]:
                     f"| {prompt} | {_format_score(criterion_means[question_id])} | "
                     f"{response_count} |"
                 )
+        feedback_lines.extend(
+            [
+                "",
+                "These are the original peer-review ratings. Your course grade may "
+                "also reflect instructor calibration of peer-review scores.",
+            ]
+        )
         for question_id, prompt in visible_text_prompts.items():
             comments = [
                 row.get(question_id, "").strip()

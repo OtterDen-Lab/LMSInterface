@@ -489,8 +489,10 @@ def test_create_peer_review_workspace_writes_shuffled_template_and_selected_pdfs
 ):
     documents = [
         ReviewDocument("low.pdf", b"low", owner_id=1),
-        ReviewDocument("middle.pdf", b"middle", owner_id=2),
-        ReviewDocument("high.pdf", b"high", owner_id=3),
+        ReviewDocument("lower-middle.pdf", b"lower-middle", owner_id=2),
+        ReviewDocument("middle.pdf", b"middle", owner_id=3),
+        ReviewDocument("upper-middle.pdf", b"upper-middle", owner_id=4),
+        ReviewDocument("high.pdf", b"high", owner_id=5),
     ]
 
     def fake_export(canvas_course, *, output_path, source_documents, **kwargs):
@@ -505,13 +507,13 @@ def test_create_peer_review_workspace_writes_shuffled_template_and_selected_pdfs
                     {
                         "pdf_id": document.short_digest,
                         "submitter_id": str(document.owner_id),
-                        "likert_clarity": str(index),
+                        "likert_clarity": str([1, 2, 2, 3, 4][index - 1]),
                     }
                     for index, document in enumerate(documents, start=1)
                 ]
             )
         assert source_documents == documents
-        return 3
+        return 5
 
     monkeypatch.setattr(
         "lms_interface.peer_review.load_source_documents",
@@ -557,7 +559,7 @@ rubric:
         encoding="utf-8-sig", newline=""
     ) as review_file:
         rows = list(csv.DictReader(review_file))
-    assert len(rows) == 3
+    assert len(rows) == 5
     assert set(rows[0]) == {
         "pdf_id",
         "submitter_id",
@@ -573,6 +575,7 @@ rubric:
     assert config["course_id"] == 123
     assert config["canvas_push"]["paper_assignment_id"] == 789
     assert config["selection"]["selected_pdf_ids"]
+    assert config["selection"]["random_count"] == 2
 
 
 def test_finalize_peer_review_workspace_writes_local_grades_participation_and_feedback(
@@ -672,6 +675,7 @@ paper-a,4,Instructor note
     assert "Correct summary" not in feedback
     assert "Instructor note" in feedback
     assert feedback.rfind("## Instructor feedback") > feedback.rfind("## What worked well?")
+    assert "instructor calibration of peer-review scores" in feedback
 
     with paths["participation"].open(encoding="utf-8-sig", newline="") as file:
         participation = {row["reviewer_id"]: row for row in csv.DictReader(file)}
