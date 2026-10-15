@@ -646,6 +646,7 @@ def main():
         "peer-review-summary": ("peer_review_summary", False),
         "peer-review-workspace": ("peer_review_workspace", False),
         "peer-review-finalize": ("peer_review_finalize", False),
+        "peer-review-push": ("peer_review_push", False),
         "get-quiz-results": ("get_quiz_results", False),
     }
 
@@ -682,6 +683,16 @@ def main():
         "--dry-run",
         action="store_true",
         help="Report updates without writing changes to Canvas",
+    )
+    parser.add_argument(
+        "--push",
+        action="store_true",
+        help="Write peer-review grades/comments to Canvas (peer-review-push only)",
+    )
+    parser.add_argument(
+        "--grades-only",
+        action="store_true",
+        help="Update peer-review grades without adding duplicate feedback comments",
     )
     parser.add_argument(
         "--include-unpublished",
@@ -810,16 +821,26 @@ def main():
             "'peer-review-workspace' is an alias for 'peer-review-summary --work-dir'; "
             "specify --work-dir."
         )
-    if helper_func_name == "peer_review_finalize" and args.work_dir is None:
-        parser.error("--work-dir is required for 'peer-review-finalize'")
+    if (
+        helper_func_name in {"peer_review_finalize", "peer_review_push"}
+        and args.work_dir is None
+    ):
+        parser.error(f"--work-dir is required for '{args.helper}'")
     if args.work_dir is not None and helper_func_name not in {
         "peer_review_summary",
         "peer_review_workspace",
         "peer_review_finalize",
+        "peer_review_push",
     }:
         parser.error("--work-dir is only supported by peer-review workspace commands")
     if helper_func_name == "get_quiz_results" and args.quiz_id is None:
         parser.error("--quiz-id is required for 'get-quiz-results'")
+    if helper_func_name == "peer_review_push" and args.dry_run and args.push:
+        parser.error("--dry-run cannot be combined with --push")
+    if args.grades_only and helper_func_name != "peer_review_push":
+        parser.error("--grades-only is only supported by peer-review-push")
+    if args.grades_only and not args.push:
+        parser.error("--grades-only requires --push")
     if (
         helper_func_name == "plan_course"
         and (
@@ -954,6 +975,27 @@ def main():
         log.info("Finalized peer-review workspace at %s", args.work_dir)
         for name, path in output_paths.items():
             log.info("  %s: %s", name, path)
+
+    elif helper_func_name == "peer_review_push":
+        from lms_interface.peer_review import PeerReviewSummaryError, push_peer_review_workspace
+
+        try:
+            result = push_peer_review_workspace(
+                canvas_course,
+                args.work_dir,
+                push=args.push,
+                include_comments=not args.grades_only,
+            )
+        except PeerReviewSummaryError as exc:
+            parser.error(str(exc))
+        action = "Pushed" if args.push else "Dry run: would push"
+        log.info(
+            "%s %d paper grades/comments and %d participation grades%s.",
+            action,
+            result["paper_grades_and_comments"],
+            result["participation_grades"],
+            f" ({result['written']} Canvas updates written)" if args.push else "",
+        )
 
     elif helper_func_name == "get_quiz_results":
         count = get_quiz_results(

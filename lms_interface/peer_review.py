@@ -1269,6 +1269,104 @@ def finalize_peer_review_workspace(work_dir: Path) -> dict[str, Path]:
     return output_paths
 
 
+def push_peer_review_workspace(
+    canvas_course: CanvasCourse,
+    work_dir: Path,
+    *,
+    push: bool = False,
+    include_comments: bool = True,
+) -> dict[str, int]:
+    """Dry-run or push finalized paper feedback and participation grades.
+
+    Paper grades and their feedback are deliberately sent in the same Canvas
+    submission update.  The caller must pass ``push=True`` to make any write.
+    """
+    config_path = work_dir / "peer-review-workspace.yaml"
+    if not config_path.is_file():
+        raise PeerReviewSummaryError(
+            f"No peer-review workspace configuration found at '{config_path}'."
+        )
+    config = yaml.safe_load(config_path.read_text())
+    if not isinstance(config, dict):
+        raise PeerReviewSummaryError("Workspace configuration must be a YAML mapping.")
+    files = config.get("files") or {}
+    grades_path = work_dir / "proposed-paper-grades.csv"
+    participation_path = work_dir / "reviewer-participation.csv"
+    feedback_dir = work_dir / "feedback"
+    if not grades_path.is_file() or not participation_path.is_file() or not feedback_dir.is_dir():
+        raise PeerReviewSummaryError(
+            "Run peer-review-finalize before preparing a Canvas grade push."
+        )
+    canvas_push = config.get("canvas_push") or {}
+    paper_assignment_id = canvas_push.get("paper_assignment_id")
+    participation_assignment_id = canvas_push.get("peer_review_participation_assignment_id")
+    if not paper_assignment_id or not participation_assignment_id:
+        raise PeerReviewSummaryError(
+            "Workspace canvas_push must specify both paper_assignment_id and "
+            "peer_review_participation_assignment_id."
+        )
+
+    with grades_path.open(encoding="utf-8-sig", newline="") as input_file:
+        paper_rows = list(csv.DictReader(input_file))
+    with participation_path.open(encoding="utf-8-sig", newline="") as input_file:
+        participation_rows = list(csv.DictReader(input_file))
+
+    planned_papers: list[tuple[int, float, str]] = []
+    for row in paper_rows:
+        pdf_id = row.get("pdf_id", "")
+        feedback_path = feedback_dir / f"{pdf_id}.md"
+        try:
+            user_id = int(row["submitter_id"])
+            score = float(row["proposed_grade_percent"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise PeerReviewSummaryError(
+                f"Invalid proposed paper grade row for PDF '{pdf_id}'."
+            ) from exc
+        if not feedback_path.is_file():
+            raise PeerReviewSummaryError(f"Missing feedback file '{feedback_path}'.")
+        planned_papers.append((user_id, score, feedback_path.read_text(encoding="utf-8")))
+
+    planned_participation: list[tuple[int, float]] = []
+    for row in participation_rows:
+        try:
+            user_id = int(row["reviewer_id"])
+            score = float(
+                row.get("manual_override_percent", "").strip()
+                or row["average_review_participation_percent"]
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise PeerReviewSummaryError(
+                "Invalid reviewer participation row; use a numeric manual override "
+                "or regenerate the workspace."
+            ) from exc
+        planned_participation.append((user_id, score))
+
+    result = {
+        "paper_grades_and_comments": len(planned_papers),
+        "participation_grades": len(planned_participation),
+        "written": 0,
+    }
+    if not push:
+        return result
+    paper_assignment = canvas_course.course.get_assignment(int(paper_assignment_id))
+    participation_assignment = canvas_course.course.get_assignment(
+        int(participation_assignment_id)
+    )
+    for user_id, score, feedback in planned_papers:
+        payload: dict[str, Any] = {"posted_grade": f"{score:g}%"}
+        kwargs: dict[str, Any] = {"submission": payload}
+        if include_comments:
+            kwargs["comment"] = {"text_comment": feedback}
+        paper_assignment.get_submission(user_id).edit(**kwargs)
+        result["written"] += 1
+    for user_id, score in planned_participation:
+        participation_assignment.get_submission(user_id).edit(
+            submission={"posted_grade": f"{score:g}%"}
+        )
+        result["written"] += 1
+    return result
+
+
 def _upload_course_pdf(canvas_course: CanvasCourse, document: ReviewDocument) -> int:
     # CanvasAPI derives the uploaded filename from the temporary path, so create
     # that path with a meaningful basename instead of passing a ignored `name=`.

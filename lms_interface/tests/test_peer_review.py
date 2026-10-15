@@ -1,6 +1,7 @@
 import csv
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import yaml
@@ -15,6 +16,7 @@ from lms_interface.peer_review import (
     finalize_peer_review_workspace,
     load_peer_review_config,
     resolve_peer_review_assignment_group,
+    push_peer_review_workspace,
 )
 
 
@@ -626,6 +628,10 @@ rubric:
                         "written_feedback_weight_percent": 40,
                     },
                 },
+                "canvas_push": {
+                    "paper_assignment_id": 100,
+                    "peer_review_participation_assignment_id": 200,
+                },
             }
         )
     )
@@ -681,3 +687,34 @@ paper-a,4,Instructor note
         participation = {row["reviewer_id"]: row for row in csv.DictReader(file)}
     assert participation["20"]["average_review_participation_percent"] == "90.00"
     assert participation["20"]["flags"] == "missing_written_feedback"
+
+    course = Mock()
+    dry_run = push_peer_review_workspace(course, work_dir)
+    assert dry_run == {
+        "paper_grades_and_comments": 2,
+        "participation_grades": 2,
+        "written": 0,
+    }
+    course.course.get_assignment.assert_not_called()
+
+    paper_assignment = Mock()
+    participation_assignment = Mock()
+    paper_submission = Mock()
+    participation_submission = Mock()
+    paper_assignment.get_submission.return_value = paper_submission
+    participation_assignment.get_submission.return_value = participation_submission
+    course.course.get_assignment.side_effect = [paper_assignment, participation_assignment]
+    pushed = push_peer_review_workspace(course, work_dir, push=True)
+    assert pushed["written"] == 4
+    assert paper_submission.edit.call_count == 2
+    assert participation_submission.edit.call_count == 2
+    _, kwargs = paper_submission.edit.call_args_list[0]
+    assert kwargs["submission"]["posted_grade"] == "100%"
+    assert "Instructor note" in kwargs["comment"]["text_comment"]
+
+    paper_submission.reset_mock()
+    participation_submission.reset_mock()
+    course.course.get_assignment.side_effect = [paper_assignment, participation_assignment]
+    push_peer_review_workspace(course, work_dir, push=True, include_comments=False)
+    _, repair_kwargs = paper_submission.edit.call_args_list[0]
+    assert repair_kwargs == {"submission": {"posted_grade": "100%"}}
