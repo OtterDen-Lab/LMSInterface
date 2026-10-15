@@ -644,6 +644,8 @@ def main():
         "plan-course": ("plan_course", False),
         "peer-review": ("peer_review", False),
         "peer-review-summary": ("peer_review_summary", False),
+        "peer-review-workspace": ("peer_review_workspace", False),
+        "peer-review-finalize": ("peer_review_finalize", False),
         "get-quiz-results": ("get_quiz_results", False),
     }
 
@@ -705,12 +707,13 @@ def main():
         help="Disable the live terminal UI and print plain text summaries instead",
     )
     parser.add_argument(
-        "--yaml-path", help="Path to YAML file (required for plan-course and peer-review)"
+        "--yaml-path",
+        help="Path to YAML file (required for plan-course, peer-review, and workspace summaries)",
     )
     parser.add_argument(
         "--source-assignment-id",
         type=int,
-        help="Use PDF attachments from this Canvas assignment (peer-review/peer-review-summary)",
+        help="Use PDF attachments from this Canvas assignment (peer-review commands)",
     )
     parser.add_argument(
         "--assignment-group-id",
@@ -725,6 +728,11 @@ def main():
         "--output",
         type=Path,
         help="Output path (peer-review-summary or get-quiz-results)",
+    )
+    parser.add_argument(
+        "--work-dir",
+        type=Path,
+        help="Create or finalize a peer-review grading workspace in this directory",
     )
     parser.add_argument(
         "--seed", type=int, default=0, help="Deterministic allocation seed (peer-review)"
@@ -784,8 +792,32 @@ def main():
         parser.error(f"--assignment-id is required for '{args.helper}'")
     if args.limit is not None and args.limit < 1:
         parser.error("--limit must be >= 1")
+    workspace_summary = (
+        helper_func_name in {"peer_review_summary", "peer_review_workspace"}
+        and args.work_dir is not None
+    )
     if helper_func_name in {"plan_course", "peer_review"} and not args.yaml_path:
         parser.error(f"--yaml-path is required for '{args.helper}'")
+    if workspace_summary:
+        if not args.yaml_path:
+            parser.error(f"--yaml-path is required when using --work-dir")
+        if args.source_assignment_id is None:
+            parser.error("--source-assignment-id is required when using --work-dir")
+        if args.output is not None:
+            parser.error("--output cannot be combined with --work-dir")
+    if helper_func_name == "peer_review_workspace" and args.work_dir is None:
+        parser.error(
+            "'peer-review-workspace' is an alias for 'peer-review-summary --work-dir'; "
+            "specify --work-dir."
+        )
+    if helper_func_name == "peer_review_finalize" and args.work_dir is None:
+        parser.error("--work-dir is required for 'peer-review-finalize'")
+    if args.work_dir is not None and helper_func_name not in {
+        "peer_review_summary",
+        "peer_review_workspace",
+        "peer_review_finalize",
+    }:
+        parser.error("--work-dir is only supported by peer-review workspace commands")
     if helper_func_name == "get_quiz_results" and args.quiz_id is None:
         parser.error("--quiz-id is required for 'get-quiz-results'")
     if (
@@ -801,7 +833,10 @@ def main():
             "--publish is required when using --publish-weekly-slides, --publish-attendance, or --publish-assignments"
         )
 
-    needs_canvas_course = helper_func_name != "plan_course" or args.publish
+    needs_canvas_course = helper_func_name not in {
+        "plan_course",
+        "peer_review_finalize",
+    } or args.publish
     canvas_course = None
     if needs_canvas_course:
         if args.course_id is None:
@@ -865,30 +900,60 @@ def main():
             dry_run=args.dry_run,
         )
 
-    elif helper_func_name == "peer_review_summary":
+    elif helper_func_name in {"peer_review_summary", "peer_review_workspace"}:
         from lms_interface.peer_review import (
             PeerReviewSummaryError,
+            create_peer_review_workspace,
             export_peer_review_summary,
         )
 
         try:
-            row_count = export_peer_review_summary(
-                canvas_course,
-                output_path=args.output or Path("peer-review-results.csv"),
-                assignment_id=args.assignment_id,
-                quiz_id=args.quiz_id,
-                assignment_group_id=args.assignment_group_id,
-                assignment_group_name=args.assignment_group_name,
-                source_assignment_id=args.source_assignment_id,
-                rubric_config_path=Path(args.yaml_path) if args.yaml_path else None,
-            )
+            if args.work_dir is not None:
+                work_dir = create_peer_review_workspace(
+                    canvas_course,
+                    work_dir=args.work_dir,
+                    course_id=args.course_id,
+                    assignment_id=args.assignment_id,
+                    quiz_id=args.quiz_id,
+                    assignment_group_id=args.assignment_group_id,
+                    assignment_group_name=args.assignment_group_name,
+                    source_assignment_id=args.source_assignment_id,
+                    rubric_config_path=Path(args.yaml_path),
+                    seed=args.seed,
+                )
+                log.info("Created peer-review grading workspace at %s", work_dir)
+            else:
+                row_count = export_peer_review_summary(
+                    canvas_course,
+                    output_path=args.output or Path("peer-review-results.csv"),
+                    assignment_id=args.assignment_id,
+                    quiz_id=args.quiz_id,
+                    assignment_group_id=args.assignment_group_id,
+                    assignment_group_name=args.assignment_group_name,
+                    source_assignment_id=args.source_assignment_id,
+                    rubric_config_path=Path(args.yaml_path) if args.yaml_path else None,
+                )
+                log.info(
+                    "Exported %d peer-review response rows to %s",
+                    row_count,
+                    args.output or Path("peer-review-results.csv"),
+                )
         except PeerReviewSummaryError as exc:
             parser.error(str(exc))
-        log.info(
-            "Exported %d peer-review response rows to %s",
-            row_count,
-            args.output or Path("peer-review-results.csv"),
+
+    elif helper_func_name == "peer_review_finalize":
+        from lms_interface.peer_review import (
+            PeerReviewSummaryError,
+            finalize_peer_review_workspace,
         )
+
+        try:
+            output_paths = finalize_peer_review_workspace(args.work_dir)
+        except PeerReviewSummaryError as exc:
+            parser.error(str(exc))
+        log.info("Finalized peer-review workspace at %s", args.work_dir)
+        for name, path in output_paths.items():
+            log.info("  %s: %s", name, path)
 
     elif helper_func_name == "get_quiz_results":
         count = get_quiz_results(

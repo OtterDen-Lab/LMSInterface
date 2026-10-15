@@ -553,6 +553,7 @@ def export_peer_review_summary(
     assignment_group_name: str | None = None,
     source_assignment_id: int | None = None,
     rubric_config_path: Path | None = None,
+    source_documents: list[ReviewDocument] | None = None,
 ) -> int:
     """Export completed peer-review survey responses to a CSV file.
 
@@ -582,8 +583,10 @@ def export_peer_review_summary(
         )
 
     submitter_ids: dict[str, int] = {}
-    if source_assignment_id is not None:
-        documents, _ = load_source_documents(canvas_course, source_assignment_id)
+    if source_documents is not None or source_assignment_id is not None:
+        documents = source_documents
+        if documents is None:
+            documents, _ = load_source_documents(canvas_course, source_assignment_id)
         submitter_ids = {
             document.short_digest: document.owner_id
             for document in documents
@@ -687,6 +690,567 @@ def export_peer_review_summary(
         writer.writeheader()
         writer.writerows(rows)
     return len(rows)
+
+
+def _rubric_question_ids_by_type(config_path: Path) -> tuple[list[str], list[str]]:
+    config = load_peer_review_config(config_path)
+    payloads = [
+        payload
+        for payload in build_question_payloads(config)
+        if payload["question_type"] != "text_only_question"
+    ]
+    question_ids = [str(payload["question_name"]) for payload in payloads]
+    likert_ids = [
+        str(payload["question_name"])
+        for payload in payloads
+        if payload["question_type"] == "multiple_choice_question"
+    ]
+    return question_ids, likert_ids
+
+
+def _peer_score(value: str) -> float | None:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return None
+    return score if 1 <= score <= 4 else None
+
+
+def _select_instructor_review_pdfs(
+    rows: list[dict[str, str]], likert_question_ids: list[str]
+) -> list[tuple[str, str, str]]:
+    """Choose low, middle, and high scored papers for independent review."""
+    scores_by_pdf: dict[str, list[float]] = {}
+    review_counts: dict[str, int] = {}
+    submitter_ids: dict[str, str] = {}
+    for row in rows:
+        pdf_id = row.get("pdf_id", "")
+        if not pdf_id:
+            continue
+        scores = [
+            score
+            for question_id in likert_question_ids
+            if (score := _peer_score(row.get(question_id, ""))) is not None
+        ]
+        if not scores:
+            continue
+        scores_by_pdf.setdefault(pdf_id, []).append(sum(scores) / len(scores))
+        review_counts[pdf_id] = review_counts.get(pdf_id, 0) + 1
+        submitter_ids[pdf_id] = row.get("submitter_id", "")
+
+    aggregated = sorted(
+        (
+            (
+                sum(scores) / len(scores),
+                pdf_id,
+                submitter_ids.get(pdf_id, ""),
+                review_counts[pdf_id],
+            )
+            for pdf_id, scores in scores_by_pdf.items()
+        ),
+        key=lambda item: (item[0], item[1]),
+    )
+    if len(aggregated) < 3:
+        raise PeerReviewSummaryError(
+            "Need at least three peer-reviewed PDFs with Likert responses to create "
+            "an instructor-review workspace."
+        )
+
+    selected: list[tuple[float, str, str, int, str]] = [
+        (*aggregated[0], "low"),
+        (*aggregated[-1], "high"),
+    ]
+    selected_pdf_ids = {aggregated[0][1], aggregated[-1][1]}
+    overall_median = aggregated[len(aggregated) // 2][0]
+    middle_candidates = [
+        candidate
+        for candidate in aggregated
+        if candidate[1] not in selected_pdf_ids and candidate[3] >= 2
+    ]
+    if not middle_candidates:
+        middle_candidates = [
+            candidate for candidate in aggregated if candidate[1] not in selected_pdf_ids
+        ]
+    middle = min(middle_candidates, key=lambda item: (abs(item[0] - overall_median), item[1]))
+    selected.append((*middle, "middle"))
+    return [(pdf_id, submitter_id, bucket) for _, pdf_id, submitter_id, _, bucket in selected]
+
+
+def create_peer_review_workspace(
+    canvas_course: CanvasCourse,
+    *,
+    work_dir: Path,
+    course_id: int,
+    quiz_id: int | None,
+    assignment_id: int | None,
+    assignment_group_id: int | None,
+    assignment_group_name: str | None,
+    source_assignment_id: int,
+    rubric_config_path: Path,
+    seed: int = 0,
+) -> Path:
+    """Create a self-contained, manually editable peer-review grading workspace."""
+    workspace_config_path = work_dir / "peer-review-workspace.yaml"
+    instructor_review_path = work_dir / "professor-review.csv"
+    if workspace_config_path.exists() or instructor_review_path.exists():
+        raise PeerReviewSummaryError(
+            f"Workspace '{work_dir}' already contains grading files. Choose a new "
+            "--work-dir to avoid overwriting manual instructor feedback."
+        )
+
+    documents, warnings = load_source_documents(canvas_course, source_assignment_id)
+    for warning in warnings:
+        log.warning(warning)
+
+    work_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = work_dir / "peer-review-results.csv"
+    export_peer_review_summary(
+        canvas_course,
+        output_path=summary_path,
+        assignment_id=assignment_id,
+        quiz_id=quiz_id,
+        assignment_group_id=assignment_group_id,
+        assignment_group_name=assignment_group_name,
+        source_assignment_id=source_assignment_id,
+        rubric_config_path=rubric_config_path,
+        source_documents=documents,
+    )
+
+    with summary_path.open(encoding="utf-8-sig", newline="") as summary_file:
+        summary_rows = list(csv.DictReader(summary_file))
+    question_ids, likert_question_ids = _rubric_question_ids_by_type(rubric_config_path)
+    selected = _select_instructor_review_pdfs(summary_rows, likert_question_ids)
+    documents_by_id = {document.short_digest: document for document in documents}
+
+    pdf_dir = work_dir / "selected-pdfs"
+    pdf_dir.mkdir(exist_ok=True)
+    template_rows: list[dict[str, str]] = []
+    for pdf_id, submitter_id, _ in selected:
+        document = documents_by_id.get(pdf_id)
+        if document is None:
+            raise PeerReviewSummaryError(
+                f"Could not find the source PDF for selected review '{pdf_id}'."
+            )
+        pdf_path = pdf_dir / f"{pdf_id}.pdf"
+        pdf_path.write_bytes(document.content)
+        template_rows.append(
+            {
+                "pdf_id": pdf_id,
+                "submitter_id": submitter_id,
+                "pdf_path": str(pdf_path.relative_to(work_dir)),
+                **{question_id: "" for question_id in question_ids},
+                "instructor_notes": "",
+            }
+        )
+    random.Random(seed).shuffle(template_rows)
+    template_fieldnames = [
+        "pdf_id",
+        "submitter_id",
+        "pdf_path",
+        *question_ids,
+        "instructor_notes",
+    ]
+    with instructor_review_path.open("w", newline="", encoding="utf-8-sig") as output_file:
+        writer = csv.DictWriter(output_file, fieldnames=template_fieldnames)
+        writer.writeheader()
+        writer.writerows(template_rows)
+
+    workspace_config = {
+        "course_id": course_id,
+        "quiz_id": quiz_id,
+        "assignment_id": assignment_id,
+        "assignment_group_id": assignment_group_id,
+        "assignment_group_name": assignment_group_name,
+        "source_assignment_id": source_assignment_id,
+        "rubric_config_path": str(rubric_config_path.resolve()),
+        "selection": {
+            "low_count": 1,
+            "middle_count": 1,
+            "high_count": 1,
+            "minimum_reviews_for_middle": 2,
+            "selected_pdf_ids": [pdf_id for pdf_id, _, _ in selected],
+            "shuffle_seed": seed,
+        },
+        "scoring": {
+            "paper": {
+                "completion_floor_percent": 40,
+                "quality_weight_percent": 60,
+            },
+            "peer_review_participation": {
+                "completion_weight_percent": 60,
+                "written_feedback_weight_percent": 40,
+            },
+        },
+        "canvas_push": {
+            "paper_assignment_id": source_assignment_id,
+            "peer_review_participation_assignment_id": None,
+            "post_student_feedback": False,
+        },
+        "files": {
+            "peer_review_results": summary_path.name,
+            "professor_review": instructor_review_path.name,
+            "selected_pdfs": pdf_dir.name,
+        },
+    }
+    workspace_config_path.write_text(
+        yaml.safe_dump(workspace_config, sort_keys=False), encoding="utf-8"
+    )
+    return work_dir
+
+
+def _rubric_review_fields(
+    config_path: Path,
+) -> tuple[list[str], dict[str, str], list[str], dict[str, str]]:
+    """Return Likert IDs/prompts and text IDs/student-visible prompts."""
+    config = load_peer_review_config(config_path)
+    likert_ids: list[str] = []
+    likert_prompts: dict[str, str] = {}
+    text_ids: list[str] = []
+    visible_text_prompts: dict[str, str] = {}
+    for section in config["rubric"].get("sections") or []:
+        for question in section.get("questions") or []:
+            question_id = str(question["id"])
+            if question.get("type") == "likert":
+                likert_ids.append(question_id)
+                likert_prompts[question_id] = str(question["prompt"])
+            elif question.get("type") == "short_response":
+                text_ids.append(question_id)
+                if question.get("visible_to_author"):
+                    visible_text_prompts[question_id] = str(question["prompt"])
+    return likert_ids, likert_prompts, text_ids, visible_text_prompts
+
+
+def _mean(values: list[float]) -> float | None:
+    return sum(values) / len(values) if values else None
+
+
+def _format_score(value: float | None) -> str:
+    return "" if value is None else f"{value:.2f}"
+
+
+def finalize_peer_review_workspace(work_dir: Path) -> dict[str, Path]:
+    """Create local proposed grades, participation checks, and feedback drafts.
+
+    This operation deliberately has no Canvas side effects. It uses the
+    instructor-scored sample to apply a bounded, per-criterion additive
+    calibration to peer aggregates, but leaves score posting for a later,
+    explicit workflow.
+    """
+    config_path = work_dir / "peer-review-workspace.yaml"
+    if not config_path.is_file():
+        raise PeerReviewSummaryError(
+            f"No peer-review workspace configuration found at '{config_path}'."
+        )
+    config = yaml.safe_load(config_path.read_text())
+    if not isinstance(config, dict):
+        raise PeerReviewSummaryError("Workspace configuration must be a YAML mapping.")
+    files = config.get("files") or {}
+    results_path = work_dir / str(files.get("peer_review_results", "peer-review-results.csv"))
+    professor_path = work_dir / str(files.get("professor_review", "professor-review.csv"))
+    rubric_path = Path(str(config.get("rubric_config_path", "")))
+    if not results_path.is_file() or not professor_path.is_file() or not rubric_path.is_file():
+        raise PeerReviewSummaryError(
+            "Workspace is missing its peer results, professor review, or rubric YAML file."
+        )
+
+    with results_path.open(encoding="utf-8-sig", newline="") as input_file:
+        peer_rows = list(csv.DictReader(input_file))
+    with professor_path.open(encoding="utf-8-sig", newline="") as input_file:
+        professor_rows = list(csv.DictReader(input_file))
+    likert_ids, likert_prompts, text_ids, visible_text_prompts = (
+        _rubric_review_fields(rubric_path)
+    )
+
+    instructor_by_pdf = {row.get("pdf_id", ""): row for row in professor_rows}
+    missing_instructor_scores = [
+        (pdf_id, question_id)
+        for pdf_id, row in instructor_by_pdf.items()
+        for question_id in likert_ids
+        if _peer_score(row.get(question_id, "")) is None
+    ]
+    if missing_instructor_scores:
+        missing = ", ".join(
+            f"{pdf_id}:{question_id}" for pdf_id, question_id in missing_instructor_scores
+        )
+        raise PeerReviewSummaryError(
+            f"Professor review has missing or invalid 1–4 Likert scores: {missing}."
+        )
+
+    rows_by_pdf: dict[str, list[dict[str, str]]] = {}
+    for row in peer_rows:
+        pdf_id = row.get("pdf_id", "")
+        if pdf_id:
+            rows_by_pdf.setdefault(pdf_id, []).append(row)
+
+    # A calibration score is the mean instructor-minus-peer difference for a
+    # criterion across the independently reviewed sample.  This is intentionally
+    # a simple correction: three reviewed papers are enough to reveal a useful
+    # systematic bias, but not enough to responsibly fit a more complex model.
+    calibration_deltas: dict[str, float] = {}
+    calibration_summary_rows: list[dict[str, str]] = []
+    for question_id in likert_ids:
+        peer_scores: list[float] = []
+        instructor_scores: list[float] = []
+        for pdf_id, instructor_row in instructor_by_pdf.items():
+            criterion_scores = [
+                score
+                for row in rows_by_pdf.get(pdf_id, [])
+                if (score := _peer_score(row.get(question_id, ""))) is not None
+            ]
+            instructor_score = _peer_score(instructor_row.get(question_id, ""))
+            peer_score = _mean(criterion_scores)
+            if peer_score is not None and instructor_score is not None:
+                peer_scores.append(peer_score)
+                instructor_scores.append(instructor_score)
+        peer_mean = _mean(peer_scores)
+        instructor_mean = _mean(instructor_scores)
+        delta = (
+            instructor_mean - peer_mean
+            if peer_mean is not None and instructor_mean is not None
+            else 0.0
+        )
+        calibration_deltas[question_id] = delta
+        calibration_summary_rows.append(
+            {
+                "criterion_id": question_id,
+                "calibration_sample_count": str(len(peer_scores)),
+                "calibration_peer_mean": _format_score(peer_mean),
+                "calibration_instructor_mean": _format_score(instructor_mean),
+                "instructor_minus_peer_delta": _format_score(delta),
+            }
+        )
+
+    scoring = config.get("scoring") or {}
+    paper_scoring = scoring.get("paper") or {}
+    completion_floor = float(paper_scoring.get("completion_floor_percent", 40))
+    quality_weight = float(paper_scoring.get("quality_weight_percent", 60))
+    participation_scoring = scoring.get("peer_review_participation") or {}
+    completion_weight = float(participation_scoring.get("completion_weight_percent", 60))
+    written_weight = float(
+        participation_scoring.get("written_feedback_weight_percent", 40)
+    )
+
+    grade_rows: list[dict[str, str]] = []
+    feedback_dir = work_dir / "feedback"
+    feedback_dir.mkdir(exist_ok=True)
+    for pdf_id, pdf_rows in sorted(rows_by_pdf.items()):
+        submitter_id = pdf_rows[0].get("submitter_id", "")
+        criterion_means: dict[str, float | None] = {
+            question_id: _mean(
+                [
+                    score
+                    for row in pdf_rows
+                    if (score := _peer_score(row.get(question_id, ""))) is not None
+                ]
+            )
+            for question_id in likert_ids
+        }
+        peer_mean = _mean(
+            [score for score in criterion_means.values() if score is not None]
+        )
+        calibrated_criterion_means = {
+            question_id: (
+                None
+                if criterion_mean is None
+                else max(1.0, min(4.0, criterion_mean + calibration_deltas[question_id]))
+            )
+            for question_id, criterion_mean in criterion_means.items()
+        }
+        calibrated_peer_mean = _mean(
+            [
+                score
+                for score in calibrated_criterion_means.values()
+                if score is not None
+            ]
+        )
+        instructor_row = instructor_by_pdf.get(pdf_id)
+        instructor_mean = None
+        if instructor_row is not None:
+            instructor_scores = [
+                _peer_score(instructor_row[question_id]) for question_id in likert_ids
+            ]
+            instructor_mean = _mean([score for score in instructor_scores if score is not None])
+        provisional_grade = None
+        if peer_mean is not None:
+            provisional_grade = completion_floor + quality_weight * ((peer_mean - 1) / 3)
+        calibrated_grade = None
+        if calibrated_peer_mean is not None:
+            calibrated_grade = completion_floor + quality_weight * (
+                (calibrated_peer_mean - 1) / 3
+            )
+        grade_rows.append(
+            {
+                "pdf_id": pdf_id,
+                "submitter_id": submitter_id,
+                "completed_peer_reviews": str(len(pdf_rows)),
+                "peer_likert_mean": _format_score(peer_mean),
+                "raw_peer_grade_percent": _format_score(provisional_grade),
+                "calibrated_likert_mean": _format_score(calibrated_peer_mean),
+                "calibration_likert_adjustment": _format_score(
+                    None
+                    if peer_mean is None or calibrated_peer_mean is None
+                    else calibrated_peer_mean - peer_mean
+                ),
+                "proposed_grade_percent": _format_score(calibrated_grade),
+                "calibration_grade_adjustment_percent": _format_score(
+                    None
+                    if provisional_grade is None or calibrated_grade is None
+                    else calibrated_grade - provisional_grade
+                ),
+                "instructor_likert_mean": _format_score(instructor_mean),
+                "instructor_minus_peer": _format_score(
+                    None
+                    if peer_mean is None or instructor_mean is None
+                    else instructor_mean - peer_mean
+                ),
+                "status": "instructor_calibration" if instructor_row else "peer_only",
+            }
+        )
+
+        feedback_lines = ["# Peer-review feedback", "", "## Rubric summary", ""]
+        if instructor_row is not None:
+            feedback_lines.extend(
+                [
+                    "| Criterion | Peer mean | Instructor score | Responses |",
+                    "| --- | ---: | ---: | ---: |",
+                ]
+            )
+        else:
+            feedback_lines.extend(
+                ["| Criterion | Peer mean | Responses |", "| --- | ---: | ---: |"]
+            )
+        for question_id in likert_ids:
+            response_count = sum(
+                _peer_score(row.get(question_id, "")) is not None for row in pdf_rows
+            )
+            prompt = likert_prompts.get(question_id, question_id).replace("\n", " ")
+            if instructor_row is not None:
+                feedback_lines.append(
+                    "| "
+                    f"{prompt} | {_format_score(criterion_means[question_id])} | "
+                    f"{_format_score(_peer_score(instructor_row.get(question_id, '')))} | "
+                    f"{response_count} |"
+                )
+            else:
+                feedback_lines.append(
+                    f"| {prompt} | {_format_score(criterion_means[question_id])} | "
+                    f"{response_count} |"
+                )
+        for question_id, prompt in visible_text_prompts.items():
+            comments = [
+                row.get(question_id, "").strip()
+                for row in pdf_rows
+                if row.get(question_id, "").strip()
+            ]
+            if comments:
+                feedback_lines.extend(["", f"## {prompt}", ""])
+                feedback_lines.extend(f"- {comment}" for comment in comments)
+        if instructor_row and instructor_row.get("instructor_notes", "").strip():
+            feedback_lines.extend(
+                ["", "## Instructor feedback", "", instructor_row["instructor_notes"].strip()]
+            )
+        (feedback_dir / f"{pdf_id}.md").write_text(
+            "\n".join(feedback_lines) + "\n", encoding="utf-8"
+        )
+
+    participation_by_reviewer: dict[str, list[dict[str, str]]] = {}
+    for row in peer_rows:
+        reviewer_id = row.get("reviewer_id", "")
+        if reviewer_id:
+            participation_by_reviewer.setdefault(reviewer_id, []).append(row)
+    participation_rows: list[dict[str, str]] = []
+    for reviewer_id, reviewer_rows in sorted(participation_by_reviewer.items()):
+        per_review_scores: list[float] = []
+        missing_likert_cells = 0
+        missing_written_cells = 0
+        for row in reviewer_rows:
+            likert_answered = sum(
+                _peer_score(row.get(question_id, "")) is not None
+                for question_id in likert_ids
+            )
+            written_answered = sum(
+                bool(row.get(question_id, "").strip()) for question_id in text_ids
+            )
+            missing_likert_cells += len(likert_ids) - likert_answered
+            missing_written_cells += len(text_ids) - written_answered
+            per_review_scores.append(
+                completion_weight * likert_answered / len(likert_ids)
+                + written_weight * written_answered / len(text_ids)
+            )
+        flags: list[str] = []
+        if missing_likert_cells:
+            flags.append("missing_likert")
+        if missing_written_cells:
+            flags.append("missing_written_feedback")
+        participation_rows.append(
+            {
+                "reviewer_id": reviewer_id,
+                "completed_reviews": str(len(reviewer_rows)),
+                "average_review_participation_percent": _format_score(
+                    _mean(per_review_scores)
+                ),
+                "missing_likert_cells": str(missing_likert_cells),
+                "missing_written_cells": str(missing_written_cells),
+                "flags": ";".join(flags),
+                "manual_override_percent": "",
+            }
+        )
+
+    output_paths = {
+        "proposed_paper_grades": work_dir / "proposed-paper-grades.csv",
+        "calibration": work_dir / "instructor-peer-calibration.csv",
+        "participation": work_dir / "reviewer-participation.csv",
+        "feedback": feedback_dir,
+    }
+    for name, output_rows, fieldnames in (
+        (
+            "proposed_paper_grades",
+            grade_rows,
+            [
+                "pdf_id",
+                "submitter_id",
+                "completed_peer_reviews",
+                "peer_likert_mean",
+                "raw_peer_grade_percent",
+                "calibrated_likert_mean",
+                "calibration_likert_adjustment",
+                "proposed_grade_percent",
+                "calibration_grade_adjustment_percent",
+                "instructor_likert_mean",
+                "instructor_minus_peer",
+                "status",
+            ],
+        ),
+        (
+            "calibration",
+            calibration_summary_rows,
+            [
+                "criterion_id",
+                "calibration_sample_count",
+                "calibration_peer_mean",
+                "calibration_instructor_mean",
+                "instructor_minus_peer_delta",
+            ],
+        ),
+        (
+            "participation",
+            participation_rows,
+            [
+                "reviewer_id",
+                "completed_reviews",
+                "average_review_participation_percent",
+                "missing_likert_cells",
+                "missing_written_cells",
+                "flags",
+                "manual_override_percent",
+            ],
+        ),
+    ):
+        with output_paths[name].open("w", newline="", encoding="utf-8-sig") as output_file:
+            writer = csv.DictWriter(output_file, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(output_rows)
+    return output_paths
 
 
 def _upload_course_pdf(canvas_course: CanvasCourse, document: ReviewDocument) -> int:

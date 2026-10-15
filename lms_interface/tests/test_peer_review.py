@@ -3,13 +3,16 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 from lms_interface.peer_review import (
     ReviewDocument,
     allocate_reviews,
     build_question_payloads,
     create_peer_reviews,
+    create_peer_review_workspace,
     export_peer_review_summary,
+    finalize_peer_review_workspace,
     load_peer_review_config,
     resolve_peer_review_assignment_group,
 )
@@ -479,3 +482,198 @@ def test_export_peer_review_summary_requests_every_report_before_collecting(
     with output_path.open(encoding="utf-8-sig", newline="") as output_file:
         rows = list(csv.DictReader(output_file))
     assert [row["Question 1"] for row in rows] == ["3", "3"]
+
+
+def test_create_peer_review_workspace_writes_shuffled_template_and_selected_pdfs(
+    tmp_path: Path, monkeypatch
+):
+    documents = [
+        ReviewDocument("low.pdf", b"low", owner_id=1),
+        ReviewDocument("middle.pdf", b"middle", owner_id=2),
+        ReviewDocument("high.pdf", b"high", owner_id=3),
+    ]
+
+    def fake_export(canvas_course, *, output_path, source_documents, **kwargs):
+        with output_path.open("w", encoding="utf-8-sig", newline="") as output_file:
+            writer = csv.DictWriter(
+                output_file,
+                fieldnames=["pdf_id", "submitter_id", "likert_clarity"],
+            )
+            writer.writeheader()
+            writer.writerows(
+                [
+                    {
+                        "pdf_id": document.short_digest,
+                        "submitter_id": str(document.owner_id),
+                        "likert_clarity": str(index),
+                    }
+                    for index, document in enumerate(documents, start=1)
+                ]
+            )
+        assert source_documents == documents
+        return 3
+
+    monkeypatch.setattr(
+        "lms_interface.peer_review.load_source_documents",
+        lambda canvas_course, assignment_id: (documents, []),
+    )
+    monkeypatch.setattr("lms_interface.peer_review.export_peer_review_summary", fake_export)
+    rubric_path = tmp_path / "rubric.yaml"
+    rubric_path.write_text(
+        """unlock_at: 2026-09-01T08:00:00-07:00
+due_at: 2026-09-08T23:59:00-07:00
+lock_at: 2026-09-09T00:00:00-07:00
+rubric:
+  name: Peer Review
+  likert_scale:
+    labels: {1: Poor, 2: Fair, 3: Good, 4: Excellent}
+  sections:
+    - section: Rating
+      questions:
+        - id: likert_clarity
+          type: likert
+          prompt: Is it clear?
+        - id: comments
+          type: short_response
+          prompt: Comments
+"""
+    )
+    work_dir = tmp_path / "workspace"
+
+    assert create_peer_review_workspace(
+        object(),
+        work_dir=work_dir,
+        course_id=123,
+        quiz_id=456,
+        assignment_id=None,
+        assignment_group_id=None,
+        assignment_group_name=None,
+        source_assignment_id=789,
+        rubric_config_path=rubric_path,
+        seed=3,
+    ) == work_dir
+
+    with (work_dir / "professor-review.csv").open(
+        encoding="utf-8-sig", newline=""
+    ) as review_file:
+        rows = list(csv.DictReader(review_file))
+    assert len(rows) == 3
+    assert set(rows[0]) == {
+        "pdf_id",
+        "submitter_id",
+        "pdf_path",
+        "likert_clarity",
+        "comments",
+        "instructor_notes",
+    }
+    assert all(row["likert_clarity"] == "" for row in rows)
+    assert all((work_dir / row["pdf_path"]).is_file() for row in rows)
+
+    config = yaml.safe_load((work_dir / "peer-review-workspace.yaml").read_text())
+    assert config["course_id"] == 123
+    assert config["canvas_push"]["paper_assignment_id"] == 789
+    assert config["selection"]["selected_pdf_ids"]
+
+
+def test_finalize_peer_review_workspace_writes_local_grades_participation_and_feedback(
+    tmp_path: Path,
+):
+    rubric_path = tmp_path / "rubric.yaml"
+    rubric_path.write_text(
+        """unlock_at: 2026-09-01T08:00:00-07:00
+due_at: 2026-09-08T23:59:00-07:00
+lock_at: 2026-09-09T00:00:00-07:00
+rubric:
+  name: Peer Review
+  likert_scale:
+    labels: {1: Poor, 2: Fair, 3: Good, 4: Excellent}
+  sections:
+    - section: Rating
+      questions:
+        - id: clarity
+          type: likert
+          prompt: Is it clear?
+        - id: public_comment
+          type: short_response
+          prompt: What worked well?
+          visible_to_author: true
+        - id: private_check
+          type: short_response
+          prompt: Summarize the report.
+          visible_to_author: false
+"""
+    )
+    work_dir = tmp_path / "workspace"
+    work_dir.mkdir()
+    (work_dir / "peer-review-workspace.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "rubric_config_path": str(rubric_path),
+                "files": {
+                    "peer_review_results": "peer-review-results.csv",
+                    "professor_review": "professor-review.csv",
+                },
+                "scoring": {
+                    "paper": {
+                        "completion_floor_percent": 40,
+                        "quality_weight_percent": 60,
+                    },
+                    "peer_review_participation": {
+                        "completion_weight_percent": 60,
+                        "written_feedback_weight_percent": 40,
+                    },
+                },
+            }
+        )
+    )
+    (work_dir / "peer-review-results.csv").write_text(
+        """pdf_id,submitter_id,reviewer_id,clarity,public_comment,private_check
+paper-a,10,20,4,Useful plot,Correct summary
+paper-a,10,21,2,More explanation needed,Another summary
+paper-b,11,20,3,,Summary
+"""
+    )
+    (work_dir / "professor-review.csv").write_text(
+        """pdf_id,clarity,instructor_notes
+paper-a,4,Instructor note
+"""
+    )
+
+    paths = finalize_peer_review_workspace(work_dir)
+
+    with paths["proposed_paper_grades"].open(encoding="utf-8-sig", newline="") as file:
+        grades = {row["pdf_id"]: row for row in csv.DictReader(file)}
+    # The instructor gave paper-a a 4 while peers averaged 3. The +1 correction
+    # is bounded at 4 and inherited by paper-b.
+    assert grades["paper-a"]["raw_peer_grade_percent"] == "80.00"
+    assert grades["paper-a"]["proposed_grade_percent"] == "100.00"
+    assert grades["paper-a"]["calibration_likert_adjustment"] == "1.00"
+    assert grades["paper-a"]["calibration_grade_adjustment_percent"] == "20.00"
+    assert grades["paper-b"]["proposed_grade_percent"] == "100.00"
+    assert grades["paper-a"]["status"] == "instructor_calibration"
+    assert grades["paper-b"]["status"] == "peer_only"
+
+    with paths["calibration"].open(encoding="utf-8-sig", newline="") as file:
+        calibration = list(csv.DictReader(file))
+    assert calibration == [
+        {
+            "criterion_id": "clarity",
+            "calibration_sample_count": "1",
+            "calibration_peer_mean": "3.00",
+            "calibration_instructor_mean": "4.00",
+            "instructor_minus_peer_delta": "1.00",
+        }
+    ]
+
+    feedback = (paths["feedback"] / "paper-a.md").read_text()
+    assert "Is it clear?" in feedback
+    assert "Instructor score" in feedback
+    assert "Useful plot" in feedback
+    assert "Correct summary" not in feedback
+    assert "Instructor note" in feedback
+    assert feedback.rfind("## Instructor feedback") > feedback.rfind("## What worked well?")
+
+    with paths["participation"].open(encoding="utf-8-sig", newline="") as file:
+        participation = {row["reviewer_id"]: row for row in csv.DictReader(file)}
+    assert participation["20"]["average_review_participation_percent"] == "90.00"
+    assert participation["20"]["flags"] == "missing_written_feedback"
