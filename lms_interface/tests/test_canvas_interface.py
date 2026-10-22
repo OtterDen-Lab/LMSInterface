@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+import requests
 from canvasapi.exceptions import ResourceDoesNotExist
 
 from lms_interface.canvas_interface import CanvasAssignment, CanvasInterface
@@ -622,34 +623,36 @@ class TestCanvasAssignment:
 
 
 class TestFileSubmissionSecurity:
-    class _FakeHeaders:
-        def __init__(self, content_type):
-            self._content_type = content_type
-
-        def get_content_type(self):
-            return self._content_type
-
-        def get(self, key, default=None):
-            if key.lower() == "content-type":
-                return self._content_type
-            return default
-
     class _FakeResponse:
-        def __init__(self, payload: bytes, content_type: str):
+        def __init__(
+            self,
+            payload: bytes,
+            content_type: str,
+            *,
+            url: str = "https://example.com/answer.py",
+            status_code: int = 200,
+            text: str = "",
+            history=None,
+        ):
             self._stream = io.BytesIO(payload)
-            self._headers = TestFileSubmissionSecurity._FakeHeaders(content_type)
+            self.headers = {"Content-Type": content_type}
+            self.url = url
+            self.status_code = status_code
+            self.text = text
+            self.history = history or []
 
-        def read(self, size=-1):
-            return self._stream.read(size)
+        def iter_content(self, chunk_size):
+            while chunk := self._stream.read(chunk_size):
+                yield chunk
 
-        def info(self):
-            return self._headers
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                error = requests.HTTPError(f"HTTP {self.status_code}")
+                error.response = self
+                raise error
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
+        def close(self):
+            return None
 
     def test_validate_url_rejects_unsupported_scheme(self):
         from lms_interface.classes import FileSubmission__Canvas
@@ -667,7 +670,7 @@ class TestFileSubmissionSecurity:
         }])
 
         with patch(
-            "lms_interface.classes.urllib.request.urlopen",
+            "lms_interface.classes.requests.get",
             return_value=self._FakeResponse(b"print('hello')", "application/pdf"),
         ):
             with pytest.raises(ValueError, match="content-type"):
@@ -683,7 +686,7 @@ class TestFileSubmissionSecurity:
         }])
 
         with patch(
-            "lms_interface.classes.urllib.request.urlopen",
+            "lms_interface.classes.requests.get",
             return_value=self._FakeResponse(b"int main() { return 0; }", "text/x-c"),
         ):
             files = submission.files
@@ -702,7 +705,7 @@ class TestFileSubmissionSecurity:
         }])
 
         with patch(
-            "lms_interface.classes.urllib.request.urlopen",
+            "lms_interface.classes.requests.get",
             return_value=self._FakeResponse(b"print('ok')", "text/plain"),
         ):
             files = submission.files
@@ -723,13 +726,51 @@ class TestFileSubmissionSecurity:
             download_headers={"Authorization": "Bearer test-token"},
         )
         with patch(
-            "lms_interface.classes.urllib.request.urlopen",
+            "lms_interface.classes.requests.get",
             return_value=self._FakeResponse(b"print('ok')", "text/plain"),
-        ) as urlopen:
+        ) as request_get:
             _ = submission.files
 
-        request = urlopen.call_args.args[0]
-        assert request.get_header("Authorization") == "Bearer test-token"
+        assert request_get.call_args.kwargs["headers"] == {
+            "Authorization": "Bearer test-token"
+        }
+
+    def test_files_log_safe_http_diagnostics_and_retry_after_failure(self, caplog):
+        from lms_interface.classes import FileSubmission__Canvas
+
+        response = self._FakeResponse(
+            b'{"error":"Bearer leaked-token"}',
+            "application/json",
+            url="https://files.example/download?signature=secret",
+            status_code=401,
+            text='{"error":"Bearer leaked-token"}',
+            history=[SimpleNamespace(
+                status_code=302,
+                url="https://canvas.example/files/4?token=secret",
+            )],
+        )
+        submission = FileSubmission__Canvas(attachments=[{
+            "filename": "answer.py",
+            "url": "https://canvas.example/files/4?token=secret",
+            "content-type": "text/plain",
+        }])
+
+        with patch(
+            "lms_interface.classes.requests.get", return_value=response
+        ) as request_get:
+            with pytest.raises(requests.HTTPError):
+                _ = submission.files
+            with pytest.raises(requests.HTTPError):
+                _ = submission.files
+
+        assert submission._files is None
+        assert request_get.call_count == 2
+        assert "https://canvas.example/files/4" in caplog.text
+        assert "https://files.example/download" in caplog.text
+        assert "signature=secret" not in caplog.text
+        assert "token=secret" not in caplog.text
+        assert "leaked-token" not in caplog.text
+        assert "Bearer [REDACTED]" in caplog.text
 
 
 class TestSubmissionClasses:

@@ -7,11 +7,12 @@ import functools
 import io
 import logging
 import os
+import re
 import typing
 import urllib.parse
-import urllib.request
 
 import canvasapi.canvas
+import requests
 
 log = logging.getLogger(__name__)
 
@@ -168,7 +169,7 @@ class FileSubmission__Canvas(FileSubmission):
 
     # If we haven't downloaded the files yet, check if we have attachments and can download them
     if self._attachments is not None:
-      self._files = []
+      downloaded_files: list[io.BytesIO] = []
       for attachment in self._attachments:
 
         # Generate a local file name with a number of options
@@ -183,20 +184,27 @@ class FileSubmission__Canvas(FileSubmission):
         attachment_content_type = self._extract_content_type(
           attachment.get('content-type') or attachment.get('content_type'))
 
-        request = urllib.request.Request(download_url,
-                                         headers=self._download_headers)
-        with urllib.request.urlopen(request,
-                                    timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
+        response = None
+        try:
+          # requests deliberately removes Authorization when following a redirect
+          # to a different hostname (for example, Canvas -> object storage).
+          response = requests.get(
+            download_url,
+            headers=self._download_headers,
+            stream=True,
+            timeout=DOWNLOAD_TIMEOUT_SECONDS,
+            allow_redirects=True,
+          )
+          response.raise_for_status()
           response_content_type = self._response_content_type(response)
           self._validate_content_type(local_file_name, attachment_content_type,
                                       response_content_type)
 
           buffer = io.BytesIO()
           total_bytes = 0
-          while True:
-            chunk = response.read(DOWNLOAD_CHUNK_BYTES)
+          for chunk in response.iter_content(chunk_size=DOWNLOAD_CHUNK_BYTES):
             if not chunk:
-              break
+              continue
             total_bytes += len(chunk)
             if total_bytes > MAX_DOWNLOAD_BYTES:
               raise ValueError(
@@ -205,7 +213,19 @@ class FileSubmission__Canvas(FileSubmission):
             buffer.write(chunk)
           buffer.seek(0)
           buffer.name = local_file_name
-          self._files.append(buffer)
+          downloaded_files.append(buffer)
+        except requests.RequestException as exc:
+          self._log_download_failure(local_file_name, download_url, exc)
+          # Do not cache a partial or empty list. A later access can retry,
+          # rather than incorrectly reporting that the submission has no files.
+          raise
+        finally:
+          if response is not None:
+            close = getattr(response, "close", None)
+            if callable(close):
+              close()
+
+      self._files = downloaded_files
 
     return self._files
 
@@ -230,16 +250,87 @@ class FileSubmission__Canvas(FileSubmission):
   @staticmethod
   def _response_content_type(response) -> str | None:
     try:
-      info = response.info()
-      if info is None:
-        return None
-      if hasattr(info, "get_content_type"):
+      headers = getattr(response, "headers", None)
+      if headers is not None:
         return FileSubmission__Canvas._extract_content_type(
-          info.get_content_type())
-      return FileSubmission__Canvas._extract_content_type(
-        info.get("Content-Type"))
+          headers.get("Content-Type"))
     except Exception:
       return None
+    return None
+
+  @staticmethod
+  def _safe_url(url: str | None) -> str:
+    parsed = urllib.parse.urlparse(str(url or ""))
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+  @staticmethod
+  def _safe_response_headers(response) -> dict[str, str]:
+    """Keep useful proxy/Canvas diagnostics without logging credentials/cookies."""
+    allowed = {
+      "content-type",
+      "content-length",
+      "location",
+      "server",
+      "via",
+      "x-request-id",
+      "x-canvas-meta",
+    }
+    headers = getattr(response, "headers", None) or {}
+    safe_headers = {}
+    for key, value in headers.items():
+      normalized_key = str(key).lower()
+      if normalized_key not in allowed:
+        continue
+      safe_headers[str(key)] = (
+        FileSubmission__Canvas._safe_url(str(value))
+        if normalized_key == "location" else str(value)
+      )
+    return safe_headers
+
+  @staticmethod
+  def _safe_response_body(response) -> str | None:
+    content_type = FileSubmission__Canvas._response_content_type(response) or ""
+    if not (content_type.startswith("text/") or content_type == "application/json"):
+      return None
+    try:
+      body = str(response.text)[:512]
+    except Exception:
+      return None
+    body = re.sub(r"(?i)(bearer\s+)[^\s,;]+", r"\1[REDACTED]", body)
+    body = re.sub(
+      r"(?i)([\"']?(?:access[_-]?token|token|api[_-]?key|password|secret|authorization)"
+      r"[\"']?\s*[:=]\s*[\"']?)[^\s,&\"'<]+",
+      r"\1[REDACTED]",
+      body,
+    )
+    return body or None
+
+  @classmethod
+  def _log_download_failure(cls, filename: str, requested_url: str,
+                            exc: requests.RequestException) -> None:
+    response = getattr(exc, "response", None)
+    if response is None:
+      log.error(
+        "Canvas attachment download failed file=%s request_url=%s error=%s",
+        filename, cls._safe_url(requested_url), exc)
+      return
+
+    redirect_chain = [
+      {"status": item.status_code, "url": cls._safe_url(item.url)}
+      for item in getattr(response, "history", [])
+    ]
+    log.error(
+      "Canvas attachment download failed file=%s request_url=%s final_url=%s "
+      "status=%s redirects=%s response_headers=%s response_body=%r error=%s",
+      filename,
+      cls._safe_url(requested_url),
+      cls._safe_url(getattr(response, "url", None)),
+      getattr(response, "status_code", None),
+      redirect_chain,
+      cls._safe_response_headers(response),
+      cls._safe_response_body(response),
+      exc,
+    )
 
   @staticmethod
   def _validate_url(url: str, filename: str) -> None:
