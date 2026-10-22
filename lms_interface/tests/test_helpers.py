@@ -3,6 +3,10 @@ from __future__ import annotations
 from io import StringIO
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
+from types import SimpleNamespace
+
+import requests
 
 from lms_interface.cleanup_missing_ui import (
   AssignmentCleanupSummary,
@@ -11,6 +15,7 @@ from lms_interface.cleanup_missing_ui import (
 from lms_interface.helpers import (
   _parse_canvas_datetime,
   cleanup_missing_by_due_date,
+  download_assignment_submissions,
   get_quiz_results,
 )
 
@@ -93,6 +98,94 @@ class FakeCourse:
 
   def get_assignments(self, **kwargs):
     return self._assignments
+
+
+class FakeDownloadResponse:
+  def __init__(self, chunks: list[bytes]):
+    self.chunks = chunks
+
+  def raise_for_status(self):
+    return None
+
+  def iter_content(self, chunk_size: int):
+    assert chunk_size == 64 * 1024
+    return iter(self.chunks)
+
+
+def test_download_assignment_submissions_uses_canvas_token_and_latest_attempt(
+    tmp_path: Path, monkeypatch
+):
+  submission = SimpleNamespace(
+      user_id=101,
+      submission_history=[
+          {"attachments": [{"filename": "old.py", "url": "https://files/old"}]},
+          {"attachments": [{"filename": "answer.py", "url": "https://files/new"}]},
+      ],
+  )
+  raw_assignment = SimpleNamespace(
+      get_submissions=lambda **kwargs: [submission],
+  )
+  assignment = SimpleNamespace(assignment=raw_assignment)
+  course = SimpleNamespace(
+      get_assignment=lambda assignment_id: assignment,
+      canvas_interface=SimpleNamespace(canvas_key="test-token"),
+  )
+  requested = []
+
+  def fake_get(url, **kwargs):
+    requested.append((url, kwargs))
+    return FakeDownloadResponse([b"print(", b"'ok')"])
+
+  monkeypatch.setattr("lms_interface.helpers.requests.get", fake_get)
+
+  stats = download_assignment_submissions(course, 42, tmp_path)
+
+  assert stats == {
+      "submissions_checked": 1,
+      "attachments_found": 1,
+      "downloaded": 1,
+      "skipped_existing": 0,
+      "failed": 0,
+  }
+  assert (tmp_path / "101" / "answer.py").read_bytes() == b"print('ok')"
+  assert not (tmp_path / "101" / "old.py").exists()
+  assert requested == [
+      ("https://files/new", {
+          "headers": {"Authorization": "Bearer test-token"},
+          "stream": True,
+          "timeout": 30,
+          "allow_redirects": True,
+      })
+  ]
+
+
+def test_download_assignment_submissions_reports_http_failure(tmp_path: Path, monkeypatch):
+  submission = SimpleNamespace(
+      user_id=101,
+      submission_history=[
+          {"attachments": [{"filename": "answer.py", "url": "https://files/new"}]},
+      ],
+  )
+  assignment = SimpleNamespace(
+      assignment=SimpleNamespace(get_submissions=lambda **kwargs: [submission]),
+  )
+  course = SimpleNamespace(
+      get_assignment=lambda assignment_id: assignment,
+      canvas_interface=SimpleNamespace(canvas_key="test-token"),
+  )
+
+  def fake_get(url, **kwargs):
+    response = SimpleNamespace(status_code=403)
+    error = requests.HTTPError("403 forbidden")
+    error.response = response
+    raise error
+
+  monkeypatch.setattr("lms_interface.helpers.requests.get", fake_get)
+
+  stats = download_assignment_submissions(course, 42, tmp_path)
+
+  assert stats["failed"] == 1
+  assert stats["downloaded"] == 0
 
 
 def test_parse_canvas_datetime_handles_zulu_suffix():

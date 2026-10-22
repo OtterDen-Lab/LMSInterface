@@ -7,8 +7,10 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List
+from urllib.parse import urlparse
 
 import canvasapi
+import requests
 
 from lms_interface.cleanup_missing_ui import (
     AssignmentCleanupSummary,
@@ -67,6 +69,138 @@ def get_quiz_results(
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(normalized_csv)
     return sum(1 for _ in csv.DictReader(io.StringIO(normalized_csv)))
+
+
+def _safe_attachment_filename(filename: Any) -> str:
+    """Return a filename that cannot escape a submission's output directory."""
+    name = Path(str(filename or "submission_file")).name.replace("\x00", "").strip()
+    return name if name not in {"", ".", ".."} else "submission_file"
+
+
+def _attachment_download_url_for_log(url: str) -> str:
+    """Describe an attachment URL without logging its potentially signed query string."""
+    parsed = urlparse(url)
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+
+def _submission_attachments(submission: Any) -> list[dict[str, Any]]:
+    """Get the latest attempt's attachments from a Canvas submission response."""
+    history = getattr(submission, "submission_history", None)
+    if isinstance(history, list) and history:
+        latest = history[-1]
+        if isinstance(latest, dict):
+            attachments = latest.get("attachments")
+            if isinstance(attachments, list):
+                return [item for item in attachments if isinstance(item, dict)]
+
+    attachments = getattr(submission, "attachments", None)
+    if isinstance(attachments, list):
+        return [item for item in attachments if isinstance(item, dict)]
+    return []
+
+
+def download_assignment_submissions(
+    canvas_course: CanvasCourse,
+    assignment_id: int,
+    output_dir: Path,
+    *,
+    overwrite: bool = False,
+    limit: int | None = None,
+) -> dict[str, int]:
+    """Download latest file attachments for an assignment, grouped by Canvas user ID.
+
+    A successful course and assignment lookup confirms that the configured key can
+    use the Canvas API. Individual attachment failures are recorded separately,
+    which makes expired URLs or file-specific authorization problems visible.
+    """
+    try:
+        assignment = canvas_course.get_assignment(assignment_id)
+    except (canvasapi.exceptions.CanvasException, requests.RequestException) as exc:
+        raise RuntimeError(
+            "Could not retrieve the assignment from the Canvas API before downloading "
+            "files. Verify the course ID and that the configured API key has access."
+        ) from exc
+    if assignment is None:
+        raise ValueError(f"Assignment {assignment_id} was not found or is unavailable.")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stats = {
+        "submissions_checked": 0,
+        "attachments_found": 0,
+        "downloaded": 0,
+        "skipped_existing": 0,
+        "failed": 0,
+    }
+    headers = {"Authorization": f"Bearer {canvas_course.canvas_interface.canvas_key}"}
+    try:
+        submissions = assignment.assignment.get_submissions(include=["submission_history"])
+    except (canvasapi.exceptions.CanvasException, requests.RequestException) as exc:
+        raise RuntimeError(
+            "Could not list assignment submissions from the Canvas API. "
+            "The API key may not have permission to view student submissions."
+        ) from exc
+
+    for submission in submissions:
+        if limit is not None and stats["submissions_checked"] >= limit:
+            break
+        stats["submissions_checked"] += 1
+        user_id = getattr(submission, "user_id", None)
+        if user_id is None:
+            log.warning("Skipping a submission without a Canvas user ID.")
+            continue
+
+        attachments = _submission_attachments(submission)
+        stats["attachments_found"] += len(attachments)
+        for attachment in attachments:
+            filename = _safe_attachment_filename(attachment.get("filename"))
+            url = attachment.get("url")
+            if not isinstance(url, str) or not url:
+                stats["failed"] += 1
+                log.error("user=%s file=%s has no downloadable Canvas URL", user_id, filename)
+                continue
+
+            user_dir = output_dir / str(user_id)
+            destination = user_dir / filename
+            if destination.exists() and not overwrite:
+                stats["skipped_existing"] += 1
+                log.info("Skipping existing file user=%s path=%s", user_id, destination)
+                continue
+            try:
+                response = requests.get(
+                    url,
+                    headers=headers,
+                    stream=True,
+                    timeout=30,
+                    allow_redirects=True,
+                )
+                response.raise_for_status()
+                user_dir.mkdir(parents=True, exist_ok=True)
+                with destination.open("wb") as file_handle:
+                    for chunk in response.iter_content(chunk_size=64 * 1024):
+                        if chunk:
+                            file_handle.write(chunk)
+            except requests.RequestException as exc:
+                stats["failed"] += 1
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                status_detail = f" status={status}" if status is not None else ""
+                log.error(
+                    "Download failed user=%s file=%s%s url=%s error=%s",
+                    user_id,
+                    filename,
+                    status_detail,
+                    _attachment_download_url_for_log(url),
+                    exc,
+                )
+                continue
+            except OSError as exc:
+                stats["failed"] += 1
+                log.error("Could not save user=%s file=%s: %s", user_id, filename, exc)
+                continue
+
+            stats["downloaded"] += 1
+            log.info("Downloaded user=%s file=%s -> %s", user_id, filename, destination)
+
+    return stats
 
 
 def get_closed_assignments(
@@ -648,6 +782,7 @@ def main():
         "peer-review-finalize": ("peer_review_finalize", False),
         "peer-review-push": ("peer_review_push", False),
         "get-quiz-results": ("get_quiz_results", False),
+        "download-submissions": ("download_assignment_submissions", True),
     }
 
     parser = argparse.ArgumentParser(
@@ -671,7 +806,7 @@ def main():
     parser.add_argument(
         "--limit",
         type=int,
-        help="Limit processing to first N students (optional, cleanup-missing only)",
+        help="Limit processing to first N students (cleanup-missing or download-submissions)",
     )
 
     parser.add_argument(
@@ -741,6 +876,16 @@ def main():
         help="Output path (peer-review-summary or get-quiz-results)",
     )
     parser.add_argument(
+        "--download-dir",
+        type=Path,
+        help="Directory for downloaded submission attachments (download-submissions)",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace matching files in --download-dir (download-submissions only)",
+    )
+    parser.add_argument(
         "--work-dir",
         type=Path,
         help="Create or finalize a peer-review grading workspace in this directory",
@@ -803,6 +948,17 @@ def main():
         parser.error(f"--assignment-id is required for '{args.helper}'")
     if args.limit is not None and args.limit < 1:
         parser.error("--limit must be >= 1")
+    if args.limit is not None and args.helper not in {
+        "cleanup-missing",
+        "download-submissions",
+    }:
+        parser.error("--limit is only supported by cleanup-missing and download-submissions")
+    if helper_func_name == "download_assignment_submissions" and args.download_dir is None:
+        parser.error("--download-dir is required for 'download-submissions'")
+    if args.download_dir is not None and helper_func_name != "download_assignment_submissions":
+        parser.error("--download-dir is only supported by download-submissions")
+    if args.overwrite and helper_func_name != "download_assignment_submissions":
+        parser.error("--overwrite is only supported by download-submissions")
     workspace_summary = (
         helper_func_name in {"peer_review_summary", "peer_review_workspace"}
         and args.work_dir is not None
@@ -1007,6 +1163,20 @@ def main():
             log.info("Exported %d student-analysis response rows to %s", count, args.output)
         else:
             log.info("Printed %d student-analysis response rows", count)
+
+    elif helper_func_name == "download_assignment_submissions":
+        stats = download_assignment_submissions(
+            canvas_course,
+            args.assignment_id,
+            args.download_dir,
+            overwrite=args.overwrite,
+            limit=args.limit,
+        )
+        log.info(
+            "Download summary: checked=%(submissions_checked)d attachments=%(attachments_found)d "
+            "downloaded=%(downloaded)d skipped_existing=%(skipped_existing)d failed=%(failed)d",
+            stats,
+        )
 
     elif helper_func_name == "plan_course":
         from lms_interface.course_plan import build_course_calendar
