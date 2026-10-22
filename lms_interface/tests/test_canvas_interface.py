@@ -711,6 +711,26 @@ class TestFileSubmissionSecurity:
         assert files[0].name == "unsafe name.py"
         assert files[0].read() == b"print('ok')"
 
+    def test_files_send_configured_download_headers(self):
+        from lms_interface.classes import FileSubmission__Canvas
+
+        submission = FileSubmission__Canvas(
+            attachments=[{
+                "filename": "answer.py",
+                "url": "https://example.com/answer.py",
+                "content-type": "text/plain",
+            }],
+            download_headers={"Authorization": "Bearer test-token"},
+        )
+        with patch(
+            "lms_interface.classes.urllib.request.urlopen",
+            return_value=self._FakeResponse(b"print('ok')", "text/plain"),
+        ) as urlopen:
+            _ = submission.files
+
+        request = urlopen.call_args.args[0]
+        assert request.get_header("Authorization") == "Bearer test-token"
+
 
 class TestSubmissionClasses:
     """Tests for submission data classes."""

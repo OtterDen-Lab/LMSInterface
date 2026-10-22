@@ -1157,6 +1157,9 @@ class CanvasAssignment(LMSWrapper):
               student=student,
               status=Submission.Status.from_string(student_submission["workflow_state"], student_submission['score']),
               attachments=student_submission["attachments"],
+              download_headers={
+                "Authorization": f"Bearer {self.canvas_interface.canvas_key}"
+              },
               submission_index=student_submission_index
             )
           )

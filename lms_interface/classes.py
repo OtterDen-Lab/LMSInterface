@@ -150,9 +150,14 @@ class FileSubmission(Submission):
 
 class FileSubmission__Canvas(FileSubmission):
   """Canvas-specific file submission with attachment downloading"""
-  def __init__(self, *args, attachments : list | None, **kwargs):
+  def __init__(self,
+               *args,
+               attachments: list | None,
+               download_headers: dict[str, str] | None = None,
+               **kwargs):
     super().__init__(*args, **kwargs)
     self._attachments = attachments
+    self._download_headers = download_headers or {}
     self.submission_index = kwargs.get("submission_index", None)
 
   @property
@@ -178,7 +183,9 @@ class FileSubmission__Canvas(FileSubmission):
         attachment_content_type = self._extract_content_type(
           attachment.get('content-type') or attachment.get('content_type'))
 
-        with urllib.request.urlopen(download_url,
+        request = urllib.request.Request(download_url,
+                                         headers=self._download_headers)
+        with urllib.request.urlopen(request,
                                     timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
           response_content_type = self._response_content_type(response)
           self._validate_content_type(local_file_name, attachment_content_type,
