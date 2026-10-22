@@ -23,3 +23,5 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+
+pa1-temp/
