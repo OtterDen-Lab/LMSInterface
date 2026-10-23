@@ -900,6 +900,11 @@ def main():
     )
     parser.add_argument("--google-oauth-port", type=int, default=8765)
     parser.add_argument(
+        "--replace-google-forms",
+        action="store_true",
+        help="Trash the prior Google Forms/PDF folder and create a fresh batch",
+    )
+    parser.add_argument(
         "--seed", type=int, default=0, help="Deterministic allocation seed (peer-review)"
     )
     parser.add_argument(
@@ -1006,6 +1011,8 @@ def main():
         parser.error("--dry-run cannot be combined with --push")
     if helper_func_name in {"peer_review_setup", "peer_review_complete"} and args.google_client_secret is None:
         parser.error("--google-client-secret is required for peer-review Google workflow")
+    if args.replace_google_forms and helper_func_name != "peer_review_setup":
+        parser.error("--replace-google-forms is only supported by peer-review-setup")
     if args.grades_only and helper_func_name != "peer_review_push":
         parser.error("--grades-only is only supported by peer-review-push")
     if args.grades_only and not args.push:
@@ -1157,7 +1164,13 @@ def main():
             log.info("Reusing existing peer-review workspace at %s", work_dir)
         else:
             work_dir = create_peer_review_workspace(canvas_course, work_dir=args.work_dir, course_id=args.course_id, assignment_id=args.assignment_id, quiz_id=args.quiz_id, assignment_group_id=args.assignment_group_id, assignment_group_name=args.assignment_group_name, source_assignment_id=args.source_assignment_id, rubric_config_path=Path(args.yaml_path), seed=args.seed)
-        manifest = create_forms(work_dir, args.google_client_secret, args.google_token_path, args.google_oauth_port)
+        manifest = create_forms(
+            work_dir,
+            args.google_client_secret,
+            args.google_token_path,
+            args.google_oauth_port,
+            replace=args.replace_google_forms,
+        )
         manifest_data = json.loads(manifest.read_text())
         log.info("Peer-review setup complete; Drive folder: %s", manifest_data["folder"].get("webViewLink", ""))
         for entry in manifest_data["forms"]:

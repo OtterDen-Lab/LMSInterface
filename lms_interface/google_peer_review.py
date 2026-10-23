@@ -31,22 +31,39 @@ def _services(client_secret: Path, token_path: Path, port: int):
     return build("drive", "v3", credentials=creds), build("forms", "v1", credentials=creds)
 
 
-def create_forms(work_dir: Path, client_secret: Path, token_path: Path, port: int = 8765) -> Path:
+def create_forms(
+    work_dir: Path,
+    client_secret: Path,
+    token_path: Path,
+    port: int = 8765,
+    *,
+    replace: bool = False,
+) -> Path:
     config = yaml.safe_load((work_dir / "peer-review-workspace.yaml").read_text())
     rubric = yaml.safe_load(Path(config["rubric_config_path"]).read_text())["rubric"]
     drive, forms = _services(client_secret, token_path, port)
     manifest = work_dir / "google-peer-review-forms.json"
     if manifest.exists():
         existing = json.loads(manifest.read_text())
-        folder_id = existing["folder"]["id"]
-        for entry in existing["forms"]:
+        if replace:
+            for entry in existing["forms"]:
+                drive.files().update(
+                    fileId=entry["form_id"], body={"trashed": True}
+                ).execute()
             drive.files().update(
-                fileId=entry["form_id"],
-                addParents=folder_id,
-                body={"name": f"Peer review: {entry['pdf_id']}"},
-                fields="id,webViewLink",
+                fileId=existing["folder"]["id"], body={"trashed": True}
             ).execute()
-        return manifest
+            manifest.unlink()
+        else:
+            folder_id = existing["folder"]["id"]
+            for entry in existing["forms"]:
+                drive.files().update(
+                    fileId=entry["form_id"],
+                    addParents=folder_id,
+                    body={"name": f"Peer review: {entry['pdf_id']}"},
+                    fields="id,webViewLink",
+                ).execute()
+            return manifest
     folder = drive.files().create(body={"name": "Peer-review calibration PDFs", "mimeType": "application/vnd.google-apps.folder"}, fields="id,webViewLink").execute()
     with (work_dir / config["files"]["professor_review"]).open(encoding="utf-8-sig", newline="") as file:
         reviews = list(csv.DictReader(file))
@@ -67,14 +84,39 @@ def create_forms(work_dir: Path, client_secret: Path, token_path: Path, port: in
         index = 0
         for section in rubric.get("sections") or []:
             for question in section.get("questions") or []:
+                if question["type"] != "likert":
+                    continue
                 rubric_ids.append(str(question["id"]))
-                q: dict[str, Any] = {"required": question["type"] == "likert"}
-                if question["type"] == "likert":
-                    q["choiceQuestion"] = {"type": "RADIO", "options": [{"value": str(labels.get(str(i), labels.get(i)))} for i in range(1, 5)]}
-                else:
-                    q["textQuestion"] = {"paragraph": True}
+                q: dict[str, Any] = {
+                    "required": True,
+                    "choiceQuestion": {
+                        "type": "RADIO",
+                        "options": [
+                            {"value": str(labels.get(str(i), labels.get(i)))}
+                            for i in range(1, 5)
+                        ],
+                    },
+                }
                 requests.append({"createItem": {"item": {"title": str(question["prompt"]), "questionItem": {"question": q}}, "location": {"index": index}}})
                 index += 1
+        rubric_ids.append("instructor_notes")
+        requests.append(
+            {
+                "createItem": {
+                    "item": {
+                        "title": "Instructor notes",
+                        "description": "Overall feedback for the author.",
+                        "questionItem": {
+                            "question": {
+                                "required": False,
+                                "textQuestion": {"paragraph": True},
+                            }
+                        },
+                    },
+                    "location": {"index": index},
+                }
+            }
+        )
         forms.forms().batchUpdate(formId=form["formId"], body={"requests": requests}).execute()
         detail = forms.forms().get(formId=form["formId"]).execute()
         question_ids = [item["questionItem"]["question"]["questionId"] for item in detail.get("items", [])]
