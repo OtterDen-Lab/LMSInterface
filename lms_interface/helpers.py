@@ -780,6 +780,8 @@ def main():
         "peer-review-summary": ("peer_review_summary", False),
         "peer-review-workspace": ("peer_review_workspace", False),
         "peer-review-finalize": ("peer_review_finalize", False),
+        "peer-review-setup": ("peer_review_setup", False),
+        "peer-review-complete": ("peer_review_complete", False),
         "peer-review-push": ("peer_review_push", False),
         "get-quiz-results": ("get_quiz_results", False),
         "download-submissions": ("download_assignment_submissions", True),
@@ -890,6 +892,13 @@ def main():
         type=Path,
         help="Create or finalize a peer-review grading workspace in this directory",
     )
+    parser.add_argument("--google-client-secret", type=Path)
+    parser.add_argument(
+        "--google-token-path",
+        type=Path,
+        default=Path.home() / ".tokens" / "lms-interface-google-token.json",
+    )
+    parser.add_argument("--google-oauth-port", type=int, default=8765)
     parser.add_argument(
         "--seed", type=int, default=0, help="Deterministic allocation seed (peer-review)"
     )
@@ -960,7 +969,7 @@ def main():
     if args.overwrite and helper_func_name != "download_assignment_submissions":
         parser.error("--overwrite is only supported by download-submissions")
     workspace_summary = (
-        helper_func_name in {"peer_review_summary", "peer_review_workspace"}
+        helper_func_name in {"peer_review_summary", "peer_review_workspace", "peer_review_setup"}
         and args.work_dir is not None
     )
     if helper_func_name in {"plan_course", "peer_review"} and not args.yaml_path:
@@ -978,7 +987,7 @@ def main():
             "specify --work-dir."
         )
     if (
-        helper_func_name in {"peer_review_finalize", "peer_review_push"}
+        helper_func_name in {"peer_review_finalize", "peer_review_push", "peer_review_setup", "peer_review_complete"}
         and args.work_dir is None
     ):
         parser.error(f"--work-dir is required for '{args.helper}'")
@@ -987,12 +996,16 @@ def main():
         "peer_review_workspace",
         "peer_review_finalize",
         "peer_review_push",
+        "peer_review_setup",
+        "peer_review_complete",
     }:
         parser.error("--work-dir is only supported by peer-review workspace commands")
     if helper_func_name == "get_quiz_results" and args.quiz_id is None:
         parser.error("--quiz-id is required for 'get-quiz-results'")
     if helper_func_name == "peer_review_push" and args.dry_run and args.push:
         parser.error("--dry-run cannot be combined with --push")
+    if helper_func_name in {"peer_review_setup", "peer_review_complete"} and args.google_client_secret is None:
+        parser.error("--google-client-secret is required for peer-review Google workflow")
     if args.grades_only and helper_func_name != "peer_review_push":
         parser.error("--grades-only is only supported by peer-review-push")
     if args.grades_only and not args.push:
@@ -1013,6 +1026,7 @@ def main():
     needs_canvas_course = helper_func_name not in {
         "plan_course",
         "peer_review_finalize",
+        "peer_review_complete",
     } or args.publish
     canvas_course = None
     if needs_canvas_course:
@@ -1131,6 +1145,30 @@ def main():
         log.info("Finalized peer-review workspace at %s", args.work_dir)
         for name, path in output_paths.items():
             log.info("  %s: %s", name, path)
+
+    elif helper_func_name == "peer_review_setup":
+        import json
+
+        from lms_interface.google_peer_review import create_forms
+        from lms_interface.peer_review import create_peer_review_workspace
+        workspace_config = args.work_dir / "peer-review-workspace.yaml"
+        if workspace_config.exists():
+            work_dir = args.work_dir
+            log.info("Reusing existing peer-review workspace at %s", work_dir)
+        else:
+            work_dir = create_peer_review_workspace(canvas_course, work_dir=args.work_dir, course_id=args.course_id, assignment_id=args.assignment_id, quiz_id=args.quiz_id, assignment_group_id=args.assignment_group_id, assignment_group_name=args.assignment_group_name, source_assignment_id=args.source_assignment_id, rubric_config_path=Path(args.yaml_path), seed=args.seed)
+        manifest = create_forms(work_dir, args.google_client_secret, args.google_token_path, args.google_oauth_port)
+        manifest_data = json.loads(manifest.read_text())
+        log.info("Peer-review setup complete; Drive folder: %s", manifest_data["folder"].get("webViewLink", ""))
+        for entry in manifest_data["forms"]:
+            log.info("  %s: %s", entry["pdf_id"], entry.get("responder_uri", ""))
+
+    elif helper_func_name == "peer_review_complete":
+        from lms_interface.google_peer_review import import_forms
+        from lms_interface.peer_review import finalize_peer_review_workspace
+        imported = import_forms(args.work_dir, args.google_client_secret, args.google_token_path, args.google_oauth_port)
+        finalize_peer_review_workspace(args.work_dir)
+        log.info("Imported %d Forms and finalized peer-review workspace", imported)
 
     elif helper_func_name == "peer_review_push":
         from lms_interface.peer_review import PeerReviewSummaryError, push_peer_review_workspace
