@@ -1093,9 +1093,6 @@ class CanvasAssignment(LMSWrapper):
     :param kwargs:
     :return:
     """
-
-    print("\n\n\n\nget_submissions (canvas assignment)\n\n\n")
-    
     if "limit" in kwargs and kwargs["limit"] is not None:
       limit = kwargs["limit"]
     else:
