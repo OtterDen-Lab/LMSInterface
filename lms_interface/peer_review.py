@@ -991,41 +991,75 @@ def finalize_peer_review_workspace(work_dir: Path) -> dict[str, Path]:
         if pdf_id:
             rows_by_pdf.setdefault(pdf_id, []).append(row)
 
-    # A calibration score is the mean instructor-minus-peer difference for a
-    # criterion across the independently reviewed sample.  This is intentionally
-    # a simple correction: three reviewed papers are enough to reveal a useful
-    # systematic bias, but not enough to responsibly fit a more complex model.
-    calibration_deltas: dict[str, float] = {}
-    calibration_summary_rows: list[dict[str, str]] = []
-    for question_id in likert_ids:
-        peer_scores: list[float] = []
-        instructor_scores: list[float] = []
-        for pdf_id, instructor_row in instructor_by_pdf.items():
-            criterion_scores = [
-                score
-                for row in rows_by_pdf.get(pdf_id, [])
-                if (score := _peer_score(row.get(question_id, ""))) is not None
-            ]
-            instructor_score = _peer_score(instructor_row.get(question_id, ""))
-            peer_score = _mean(criterion_scores)
-            if peer_score is not None and instructor_score is not None:
-                peer_scores.append(peer_score)
-                instructor_scores.append(instructor_score)
-        peer_mean = _mean(peer_scores)
-        instructor_mean = _mean(instructor_scores)
-        delta = (
-            instructor_mean - peer_mean
-            if peer_mean is not None and instructor_mean is not None
-            else 0.0
+    criterion_means_by_pdf: dict[str, dict[str, float | None]] = {}
+    peer_means_by_pdf: dict[str, float | None] = {}
+    for pdf_id, pdf_rows in rows_by_pdf.items():
+        criterion_means = {
+            question_id: _mean(
+                [
+                    score
+                    for row in pdf_rows
+                    if (score := _peer_score(row.get(question_id, ""))) is not None
+                ]
+            )
+            for question_id in likert_ids
+        }
+        criterion_means_by_pdf[pdf_id] = criterion_means
+        peer_means_by_pdf[pdf_id] = _mean(
+            [score for score in criterion_means.values() if score is not None]
         )
-        calibration_deltas[question_id] = delta
+
+    calibration_samples: list[tuple[str, float, float]] = []
+    for pdf_id, instructor_row in instructor_by_pdf.items():
+        peer_mean = peer_means_by_pdf.get(pdf_id)
+        instructor_mean = _mean(
+            [
+                score
+                for question_id in likert_ids
+                if (score := _peer_score(instructor_row.get(question_id, "")))
+                is not None
+            ]
+        )
+        if peer_mean is not None and instructor_mean is not None:
+            calibration_samples.append((pdf_id, peer_mean, instructor_mean))
+    if len(calibration_samples) < 2:
+        raise PeerReviewSummaryError(
+            "Need at least two completed instructor reviews to calibrate peer scores."
+        )
+    lower_anchor = min(calibration_samples, key=lambda sample: sample[2])
+    upper_anchor = max(calibration_samples, key=lambda sample: sample[2])
+    if lower_anchor[1] >= upper_anchor[1]:
+        raise PeerReviewSummaryError(
+            "Instructor calibration anchors are not ordered by peer score; review "
+            "the lowest and highest instructor-scored samples before finalizing."
+        )
+
+    def calibrate_peer_mean(peer_mean: float) -> float:
+        lower_pdf, lower_peer, lower_instructor = lower_anchor
+        upper_pdf, upper_peer, upper_instructor = upper_anchor
+        del lower_pdf, upper_pdf
+        proportion = (peer_mean - lower_peer) / (upper_peer - lower_peer)
+        mapped = lower_instructor + proportion * (upper_instructor - lower_instructor)
+        return max(lower_instructor, min(upper_instructor, mapped))
+
+    calibration_summary_rows = []
+    for pdf_id, peer_mean, instructor_mean in calibration_samples:
+        calibrated = calibrate_peer_mean(peer_mean)
+        role = (
+            "lower_anchor"
+            if pdf_id == lower_anchor[0]
+            else "upper_anchor"
+            if pdf_id == upper_anchor[0]
+            else "validation"
+        )
         calibration_summary_rows.append(
             {
-                "criterion_id": question_id,
-                "calibration_sample_count": str(len(peer_scores)),
-                "calibration_peer_mean": _format_score(peer_mean),
-                "calibration_instructor_mean": _format_score(instructor_mean),
-                "instructor_minus_peer_delta": _format_score(delta),
+                "pdf_id": pdf_id,
+                "role": role,
+                "peer_likert_mean": _format_score(peer_mean),
+                "instructor_likert_mean": _format_score(instructor_mean),
+                "calibrated_likert_mean": _format_score(calibrated),
+                "instructor_minus_calibrated": _format_score(instructor_mean - calibrated),
             }
         )
 
@@ -1044,33 +1078,10 @@ def finalize_peer_review_workspace(work_dir: Path) -> dict[str, Path]:
     feedback_dir.mkdir(exist_ok=True)
     for pdf_id, pdf_rows in sorted(rows_by_pdf.items()):
         submitter_id = pdf_rows[0].get("submitter_id", "")
-        criterion_means: dict[str, float | None] = {
-            question_id: _mean(
-                [
-                    score
-                    for row in pdf_rows
-                    if (score := _peer_score(row.get(question_id, ""))) is not None
-                ]
-            )
-            for question_id in likert_ids
-        }
-        peer_mean = _mean(
-            [score for score in criterion_means.values() if score is not None]
-        )
-        calibrated_criterion_means = {
-            question_id: (
-                None
-                if criterion_mean is None
-                else max(1.0, min(4.0, criterion_mean + calibration_deltas[question_id]))
-            )
-            for question_id, criterion_mean in criterion_means.items()
-        }
-        calibrated_peer_mean = _mean(
-            [
-                score
-                for score in calibrated_criterion_means.values()
-                if score is not None
-            ]
+        criterion_means = criterion_means_by_pdf[pdf_id]
+        peer_mean = peer_means_by_pdf[pdf_id]
+        calibrated_peer_mean = (
+            calibrate_peer_mean(peer_mean) if peer_mean is not None else None
         )
         instructor_row = instructor_by_pdf.get(pdf_id)
         instructor_mean = None
@@ -1241,11 +1252,12 @@ def finalize_peer_review_workspace(work_dir: Path) -> dict[str, Path]:
             "calibration",
             calibration_summary_rows,
             [
-                "criterion_id",
-                "calibration_sample_count",
-                "calibration_peer_mean",
-                "calibration_instructor_mean",
-                "instructor_minus_peer_delta",
+                "pdf_id",
+                "role",
+                "peer_likert_mean",
+                "instructor_likert_mean",
+                "calibrated_likert_mean",
+                "instructor_minus_calibrated",
             ],
         ),
         (

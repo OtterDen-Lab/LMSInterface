@@ -639,12 +639,13 @@ rubric:
         """pdf_id,submitter_id,reviewer_id,clarity,public_comment,private_check
 paper-a,10,20,4,Useful plot,Correct summary
 paper-a,10,21,2,More explanation needed,Another summary
-paper-b,11,20,3,,Summary
+paper-b,11,20,2,,Summary
 """
     )
     (work_dir / "professor-review.csv").write_text(
         """pdf_id,clarity,instructor_notes
 paper-a,4,Instructor note
+paper-b,2,
 """
     )
 
@@ -652,27 +653,19 @@ paper-a,4,Instructor note
 
     with paths["proposed_paper_grades"].open(encoding="utf-8-sig", newline="") as file:
         grades = {row["pdf_id"]: row for row in csv.DictReader(file)}
-    # The instructor gave paper-a a 4 while peers averaged 3. The +1 correction
-    # is bounded at 4 and inherited by paper-b.
+    # The instructor-reviewed papers establish the lower (2 -> 2) and upper
+    # (3 -> 4) anchors for the bounded overall scale.
     assert grades["paper-a"]["raw_peer_grade_percent"] == "80.00"
     assert grades["paper-a"]["proposed_grade_percent"] == "100.00"
     assert grades["paper-a"]["calibration_likert_adjustment"] == "1.00"
     assert grades["paper-a"]["calibration_grade_adjustment_percent"] == "20.00"
-    assert grades["paper-b"]["proposed_grade_percent"] == "100.00"
+    assert grades["paper-b"]["proposed_grade_percent"] == "60.00"
     assert grades["paper-a"]["status"] == "instructor_calibration"
-    assert grades["paper-b"]["status"] == "peer_only"
+    assert grades["paper-b"]["status"] == "instructor_calibration"
 
     with paths["calibration"].open(encoding="utf-8-sig", newline="") as file:
         calibration = list(csv.DictReader(file))
-    assert calibration == [
-        {
-            "criterion_id": "clarity",
-            "calibration_sample_count": "1",
-            "calibration_peer_mean": "3.00",
-            "calibration_instructor_mean": "4.00",
-            "instructor_minus_peer_delta": "1.00",
-        }
-    ]
+    assert {row["role"] for row in calibration} == {"lower_anchor", "upper_anchor"}
 
     feedback = (paths["feedback"] / "paper-a.md").read_text()
     assert "Is it clear?" in feedback
