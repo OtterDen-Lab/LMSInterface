@@ -695,6 +695,24 @@ class TestFileSubmissionSecurity:
         assert files[0].name == "main_hw3_1.cpp"
         assert files[0].read() == b"int main() { return 0; }"
 
+    def test_files_allow_yaml_with_vendor_text_content_type(self):
+        from lms_interface.classes import FileSubmission__Canvas
+
+        submission = FileSubmission__Canvas(attachments=[{
+            "filename": "benchmark-config.yaml",
+            "url": "https://example.com/benchmark-config.yaml",
+            "content-type": "text/x-yaml",
+        }])
+
+        with patch(
+            "lms_interface.classes.requests.get",
+            return_value=self._FakeResponse(b"benchmark: true\n", "text/x-yaml"),
+        ):
+            files = submission.files
+
+        assert len(files) == 1
+        assert files[0].read() == b"benchmark: true\n"
+
     def test_files_download_and_sanitize_filename(self):
         from lms_interface.classes import FileSubmission__Canvas
 

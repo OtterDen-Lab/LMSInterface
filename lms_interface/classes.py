@@ -356,6 +356,14 @@ class FileSubmission__Canvas(FileSubmission):
     if observed in allowed:
       return
 
+    # Canvas, browsers, and object storage providers do not consistently use
+    # the same MIME type for text-based files (for example, text/x-yaml).
+    # Extensions whose policy already permits text/plain can safely accept
+    # other text/* aliases; the assignment's file-extension rules remain the
+    # primary restriction on submitted file types.
+    if "text/plain" in allowed and observed.startswith("text/"):
+      return
+
     if observed == "application/octet-stream":
       return
 
